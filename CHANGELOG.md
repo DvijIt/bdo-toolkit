@@ -4,7 +4,29 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Added
+
+- Add profile-based world position telemetry. Optional schema-1 `position`
+  and `own_object` layouts support `LivePositionSession` and streaming
+  `replay_position`, with immutable readings of every nearby moving object:
+  object ID, x, height, and z in game centimetres, and an optional facing unit
+  vector with a compass `heading`. Several position sources combine, the
+  latest message per object winning. Positions never identify the player: its
+  per-login object ID is learned only from `own_object` sources, such as the
+  player's class resource change, or given as `object_id`, and is forgotten
+  when its connection closes or starts a new epoch. `status` follows the
+  player once known, and `own_only` yields only the player's readings.
+  Unexpected message shapes, invalid values, a facing that is not a unit
+  vector, or two players named on one connection fail closed. Player
+  detection relies on an observed object ID range, and party play is
+  untested.
+- Add profile-based class resource telemetry. An optional schema-1 `resource`
+  layout supports `LiveResourceSession` and streaming `replay_resource`, with
+  immutable maximum, signed change, current value, and percentage for MP or
+  the class's own resource. The same message reports nearby mounts, which are
+  included unless `own_only` is set; the player is marked through the same
+  `own_object` detection as position. A changed message shape, a zero maximum,
+  or a current value above the maximum fails closed.
 
 ## 1.0.8 - 2026-10-14
 
