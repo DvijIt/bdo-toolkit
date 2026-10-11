@@ -27,6 +27,17 @@ All notable released changes to `bdo-toolkit` are documented here.
   included unless `own_only` is set; the player is marked through the same
   `own_object` detection as position. A changed message shape, a zero maximum,
   or a current value above the maximum fails closed.
+- Add position and class resource opcode relocation.
+  `relocate_position_replay` / `relocate_position_live` and
+  `relocate_resource_replay` / `relocate_resource_live` re-find the opcodes
+  after a patch from a short, clean capture, keeping the previous layouts'
+  message lengths and offsets. A position source is accepted when every
+  message holds a world position and a unit facing vector; the resource when
+  every message is a valid change, each object keeps one maximum, and one
+  names a player. An `own_object` source that is the resource message moves
+  with it. No match or more than one fails with what the capture lacked.
+  `update_position_profile` and `update_resource_profile` replace only their
+  layouts, with a backup, an atomic write and an optional digest check.
 
 ## 1.0.8 - 2026-10-14
 
