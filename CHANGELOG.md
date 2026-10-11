@@ -4,7 +4,28 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Added
+
+- Add profile-based combat telemetry. An optional schema-1 `combat` layout
+  supports `LiveCombatSession` and streaming `replay_combat`, with immutable
+  spawn, hit and kill events of objects near the player. Spawns pair each
+  object ID with its game data character key; hits carry attacker and target
+  IDs, skill number, damage, the target's HP after the hit, critical, back
+  and air attack, the target's position, and the target's character key when
+  its spawn was seen; kills carry victim, killer, character key and position.
+  Every nearby player's hits and kills are included. A spawn or kill the
+  server sends again is reported once per connection. Unexpected record list
+  shapes, non-finite or negative damage and HP, or non-finite positions fail
+  closed. Loot is not linked to kills.
+- Add combat opcode relocation. `relocate_combat_replay` and
+  `relocate_combat_live` re-find the combat opcodes after a patch from a
+  short, clean capture of fighting, keeping the previous layout's record
+  shapes and field offsets. A message is accepted only when a target's HP
+  falls by the damage, a kill names a lethal hit's target at that moment, and
+  spawned objects are hit or killed later with the same character key; no
+  match or more than one fails with what the capture lacked.
+  `update_combat_profile` replaces only the combat layout, with a backup, an
+  atomic write and an optional digest check, and never writes on its own.
 
 ## 1.0.8 - 2026-10-14
 

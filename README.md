@@ -44,6 +44,7 @@ combines supported observations in one live session.
 | Arena of Solare leaderboards | A finite `SolareCaptureResult` containing overall rankings, class tables, and player statistics when the capture is complete | [Arena of Solare](https://ychwu.github.io/bdo-toolkit/#solare-overview) | Beta |
 | Grind tracking | One capture for confirmed mob drops, with optional profile-based Agris and solo XP | [GrindSession](https://ychwu.github.io/bdo-toolkit/#grind-session) | Experimental |
 | Raw server messages | Every length-framed server-to-client message, opcode-free and undecoded, for protocol research | [Raw server messages](https://ychwu.github.io/bdo-toolkit/#raw-messages) | Experimental |
+| Combat | Profile-based spawns, hits (damage, target HP, critical, back attack) and kills of nearby objects | `bdo_toolkit.combat` docstrings | Experimental |
 
 The standalone workflows include synchronous and
 [asyncio](https://ychwu.github.io/bdo-toolkit/#asyncio) sessions, capture and
