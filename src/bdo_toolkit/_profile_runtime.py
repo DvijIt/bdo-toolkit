@@ -15,6 +15,7 @@ from .profiles import (
     OriginCompanionFamily,
     ProfileError,
     AgrisProfileLayout,
+    CombatProfileLayout,
     XPProfileLayout,
 )
 
@@ -49,6 +50,10 @@ def validate_runtime_profile(profile: OpcodeProfile) -> RuntimeProfileValidation
         if not isinstance(profile.agris, AgrisProfileLayout):
             raise ProfileError("agris must be an AgrisProfileLayout")
         profile.agris.__post_init__()
+    if profile.combat is not None:
+        if not isinstance(profile.combat, CombatProfileLayout):
+            raise ProfileError("combat must be a CombatProfileLayout")
+        profile.combat.__post_init__()
 
     loaded_specs = event_specs_from_profile(profile)
     decrement_specs = tuple(
