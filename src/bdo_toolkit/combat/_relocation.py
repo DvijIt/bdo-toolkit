@@ -209,8 +209,10 @@ def _decode_kills(frames: list[BDOFrame], layout: CombatKillLayout) -> list[_Kil
 def _kill_matches(kills: list[_Kill], hits: list[_Hit]) -> tuple[int, int]:
     """Distinct lethal-hit targets, and how many of them a kill names at the same moment.
 
-    The killer is not compared: a summon's or skill object's lethal hit is
-    credited to the player (13 of 63 Wizard kills at the Orc Camp).
+    The killer is not compared. A helper object's lethal hit is credited to
+    the player: 13 of 63 Wizard kills at the Orc Camp came from objects the
+    spawns name Keeper Marg, Keeper Arne and Flame's Calling, with their own
+    skill numbers.
     """
     lethal = {(h.connection, h.target): h for h in hits if h.hp <= 0 and h.damage >= 1}
     matched = sum(any(k.connection == c and k.victim == target and abs(k.at - hit.at) <= KILL_WINDOW_SECONDS
