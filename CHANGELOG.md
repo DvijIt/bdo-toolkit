@@ -4,7 +4,20 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Added
+
+- Add opcode-free raw server message capture. The separate `bdo_toolkit.raw`
+  API frames every server-to-client message without an opcode profile,
+  decoding, or decryption, through streaming `replay_raw` for saved PCAP or
+  PCAPNG files and single-use `LiveRawSession`. Immutable `RawMessage` values
+  carry the whole frame with length, flag, opcode, and payload properties,
+  plus timestamp, flow, connection epoch, per-epoch index, and the unwrapped
+  TCP sequence of the first byte, so gaps stay visible. TCP gaps and flow
+  evictions are counted in health rather than raised; native drops and queue
+  overflows fail closed. Framing waits for a message boundary, so captures
+  that attach mid-stream skip leading bytes, and messages accepted while
+  resynchronizing after a TCP gap are not verified. The live event queue
+  defaults to `DEFAULT_RAW_EVENT_QUEUE_SIZE` (16,384 messages).
 
 ## 1.0.7 - 2026-10-01
 
