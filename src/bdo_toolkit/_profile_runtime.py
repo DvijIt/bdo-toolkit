@@ -15,6 +15,9 @@ from .profiles import (
     OriginCompanionFamily,
     ProfileError,
     AgrisProfileLayout,
+    OwnObjectProfileLayout,
+    PositionProfileLayout,
+    ResourceProfileLayout,
     XPProfileLayout,
 )
 
@@ -45,6 +48,13 @@ def validate_runtime_profile(profile: OpcodeProfile) -> RuntimeProfileValidation
         if not isinstance(profile.xp, XPProfileLayout):
             raise ProfileError("xp must be an XPProfileLayout")
         profile.xp.__post_init__()
+    for name, layout_type in (("position", PositionProfileLayout), ("own_object", OwnObjectProfileLayout),
+                              ("resource", ResourceProfileLayout)):
+        layout = getattr(profile, name)
+        if layout is not None:
+            if not isinstance(layout, layout_type):
+                raise ProfileError(f"{name} must be a {layout_type.__name__}")
+            layout.__post_init__()
     if profile.agris is not None:
         if not isinstance(profile.agris, AgrisProfileLayout):
             raise ProfileError("agris must be an AgrisProfileLayout")
