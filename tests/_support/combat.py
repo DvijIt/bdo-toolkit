@@ -46,21 +46,24 @@ def frame(raw: bytes, *, at: float = 1.0, epoch: int = 1, flow: FlowKey = FLOW) 
     return BDOFrame(1, raw, PacketContext(at, flow, flow_generation=epoch), 1000)
 
 
-def spawn_record(object_id: int, key: int) -> list[Field]:
-    return [(SPAWN.character_key_offset, "H", key), (SPAWN.object_id_offset, "I", object_id)]
+def spawn_record(object_id: int, key: int, *, layout: CombatSpawnLayout = SPAWN) -> list[Field]:
+    return [(layout.character_key_offset, "H", key), (layout.object_id_offset, "I", object_id)]
 
 
 def hit_record(target: int = BEE, *, attacker: int = ME, hit_id: int = 0x024F1D35, damage: float = 2869.0,
-               hp: float = 0.0, skill: int = 2621, critical: int = 0, special: int = 6) -> list[Field]:
-    return [(HIT.target_id_offset, "I", target), (HIT.hit_id_offset, "I", hit_id), (HIT.damage_offset, "f", damage),
-            (HIT.target_hp_offset, "f", hp), (HIT.attacker_id_offset, "I", attacker),
-            (HIT.position_offset, "3f", POSITION), (HIT.skill_offset, "H", skill),
-            (HIT.critical_offset, "B", critical), (HIT.special_attack_offset, "B", special)]
+               hp: float = 0.0, skill: int = 2621, critical: int = 0, special: int = 6,
+               layout: CombatHitLayout = HIT) -> list[Field]:
+    return [(layout.target_id_offset, "I", target), (layout.hit_id_offset, "I", hit_id),
+            (layout.damage_offset, "f", damage), (layout.target_hp_offset, "f", hp),
+            (layout.attacker_id_offset, "I", attacker), (layout.position_offset, "3f", POSITION),
+            (layout.skill_offset, "H", skill), (layout.critical_offset, "B", critical),
+            (layout.special_attack_offset, "B", special)]
 
 
-def kill_record(victim: int = BEE, *, killer: int = ME, key: int = PARASITIC_BEE) -> list[Field]:
-    return [(KILL.position_offset, "3f", POSITION), (KILL.character_key_offset, "H", key),
-            (KILL.killer_id_offset, "I", killer), (KILL.victim_id_offset, "I", victim)]
+def kill_record(victim: int = BEE, *, killer: int = ME, key: int = PARASITIC_BEE,
+                layout: CombatKillLayout = KILL) -> list[Field]:
+    return [(layout.position_offset, "3f", POSITION), (layout.character_key_offset, "H", key),
+            (layout.killer_id_offset, "I", killer), (layout.victim_id_offset, "I", victim)]
 
 
 def spawns(*records: list[Field], **context) -> BDOFrame:
