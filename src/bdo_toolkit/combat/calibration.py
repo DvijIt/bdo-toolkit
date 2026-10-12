@@ -1,9 +1,10 @@
-"""Re-find the combat opcodes after a patch and update a profile explicitly.
+"""Find the combat layout again after a patch and update a profile explicitly.
 
-Relocation keeps the previous layout's record shapes and field offsets and
-searches only the opcodes (see ``_relocation``). Capture a couple of minutes
-of fighting that walks into view of monsters, kills several, and passes
-their corpses again later. Nothing is written until ``update_combat_profile``.
+Relocation finds the opcodes, record list shapes and field offsets again
+from the capture itself; the previous layout only breaks ties (see
+``_relocation``). Capture a few minutes of grinding that walks into view of
+monsters, kills at least three of them, and lets them hit back. Nothing is
+written until ``update_combat_profile``.
 """
 from __future__ import annotations
 

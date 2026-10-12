@@ -2,9 +2,10 @@
 
 Spawns name each object coming into view by its game data character key,
 hits carry damage, the target's HP, critical, back and air attack, and
-kills the killer. The opcodes move with most weekly patches;
-``relocate_combat_replay`` / ``relocate_combat_live`` re-find them from a
-short fight and ``update_combat_profile`` saves the result.
+kills the killer. The opcodes move with most weekly patches, and record
+shapes and offsets can move too; ``relocate_combat_replay`` /
+``relocate_combat_live`` find all of them again from a short fight and
+``update_combat_profile`` saves the result.
 """
 from ..profiles import CombatHitLayout, CombatKillLayout, CombatProfileLayout, CombatSpawnLayout
 from ._relocation import CombatCalibrationError, CombatRelocationEvidence

@@ -17,13 +17,18 @@ All notable released changes to `bdo-toolkit` are documented here.
   server sends again is reported once per connection. Unexpected record list
   shapes, non-finite or negative damage and HP, or non-finite positions fail
   closed. Loot is not linked to kills.
-- Add combat opcode relocation. `relocate_combat_replay` and
-  `relocate_combat_live` re-find the combat opcodes after a patch from a
-  short, clean capture of fighting, keeping the previous layout's record
-  shapes and field offsets. A message is accepted only when a target's HP
-  falls by the damage, a kill names a lethal hit's target at that moment, and
-  spawned objects are hit or killed later with the same character key; no
-  match or more than one fails with what the capture lacked.
+- Add combat layout relocation. `relocate_combat_replay` and
+  `relocate_combat_live` find the combat opcodes, record list shapes and
+  field offsets again after a patch from a short, clean capture of grinding.
+  Record list geometry comes from message lengths and the count byte. A field
+  is accepted only when its values pass a check that random bytes fail: a
+  target's HP falls by the damage, a kill names a lethal hit's target at that
+  moment, the killer is the lethal hit's attacker in most kills, the kill
+  happens where the hit landed, and spawned objects are hit or killed later
+  with the same character key. Hit ID, skill, critical and special attack
+  move with their nearest checked field and must still read sensibly. The
+  previous layout only breaks ties. No match, or two equally good messages,
+  fails with what the capture lacked.
   `update_combat_profile` replaces only the combat layout, with a backup, an
   atomic write and an optional digest check, and never writes on its own.
 
