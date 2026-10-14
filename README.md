@@ -33,7 +33,7 @@ no usable adapter is found. Discovery does not apply settings or verify decoding
 
 ## Capabilities
 
-bdo-toolkit exposes four passive workflows. Item activity, item state, and
+bdo-toolkit exposes these passive workflows. Item activity, item state, and
 Solare support live capture and saved PCAP or PCAPNG replay. Grind tracking
 combines supported observations in one live session.
 
@@ -43,6 +43,7 @@ combines supported observations in one live session.
 | Inventory and town storage | A finite `ItemStateSnapshot` assembled from character-load traffic, with inventory, known balances, and observed town storage | [Inventory & town storage](https://ychwu.github.io/bdo-toolkit/#item-state-overview) | Beta |
 | Arena of Solare leaderboards | A finite `SolareCaptureResult` containing overall rankings, class tables, and player statistics when the capture is complete | [Arena of Solare](https://ychwu.github.io/bdo-toolkit/#solare-overview) | Beta |
 | Grind tracking | One capture for confirmed mob drops, with optional profile-based Agris and solo XP | [GrindSession](https://ychwu.github.io/bdo-toolkit/#grind-session) | Experimental |
+| Raw server messages | Every length-framed server-to-client message, opcode-free and undecoded, for protocol research | `bdo_toolkit.raw` docstrings | Experimental |
 
 The standalone workflows include synchronous and
 [asyncio](https://ychwu.github.io/bdo-toolkit/#asyncio) sessions, capture and
