@@ -2,8 +2,9 @@
 
 The resource is MP or the class's own kind (one message for all classes).
 Reports every change the server sends (the player's and nearby mounts'
-stat) and marks the player's own once its object ID is known. The
-opcode moves with most weekly patches.
+stat) and marks the player's own once its object ID is known. Patches
+move the opcode and can change the message length and field order;
+``relocate_resource_replay`` / ``relocate_resource_live`` find them again.
 """
 from .._layout_relocation import LayoutProfileUpdate, LayoutRelocationError
 from ..profiles import OwnObjectProfileLayout, OwnObjectSource, ResourceProfileLayout
