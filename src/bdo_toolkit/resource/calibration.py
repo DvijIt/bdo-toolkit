@@ -1,34 +1,29 @@
-"""Re-find the class resource opcode after a patch and update a profile explicitly.
+"""Find the class resource layout again after a patch and update a profile explicitly.
 
-The resource layout keeps its message length and offsets; only its opcode
-is searched. A candidate is accepted when every message is a valid change
-(current within a positive maximum that stays the same per object) and one
-names a player. An ``own_object`` source that is the resource message moves
-with it. Capture half a minute of using skills. Nothing is written until
-``update_resource_profile``.
+A patch can move the opcode, change the message length and reorder the
+fields, so relocation finds all three from the capture itself
+(``_telemetry_discovery``): per object, the next current value often equals
+the previous one plus the change, the maximum stays the same and is
+reached, and the player it names also moves in position messages. An
+``own_object`` source that is the resource message moves with it. Capture
+half a minute of moving with three or more skills that cost resource, and
+let it refill. Nothing is written until ``update_resource_profile``.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-import struct
 from pathlib import Path
 
 from .._capture_options import LiveCaptureOptions
 from .._layout_relocation import (FixedLengthCollector, LayoutProfileUpdate, LayoutRelocationError, collect_live,
-                                  collect_replay, require_clean, single, update_profile_sections)
-from .._own_object import PLAYER_OBJECT_ID_LIMIT
-from .._protocol import DEFAULT_SERVER_PORTS, BDOFrame
+                                  collect_replay, require_clean, update_profile_sections)
+from .._protocol import DEFAULT_SERVER_PORTS
+from .._telemetry_discovery import discover, discovery_collector
 from .._tracked_capture import CaptureHealth
 from ..profiles import OpcodeProfile, OwnObjectProfileLayout, ResourceProfileLayout
 from ._tracker import profile_layout
-
-MIN_RESOURCE_READINGS = 3
-
-_U32 = struct.Struct("<I")
-_I32 = struct.Struct("<i")
 
 
 @dataclass(frozen=True)
@@ -60,58 +55,36 @@ class ResourceCalibrationResult:
                 "health": self.health.to_dict(), "completed_at": self.completed_at}
 
 
-def _passes(frames: list[BDOFrame], layout: ResourceProfileLayout) -> bool:
-    """Every message is a change the resource decoder accepts, and they look like one stat per object."""
-    if len(frames) < MIN_RESOURCE_READINGS:
-        return False
-    maxima: dict[int, set[int]] = defaultdict(set)
-    changed = names_player = False
-    for frame in frames:
-        message = frame.message
-        (maximum,) = _U32.unpack_from(message, layout.maximum_offset)
-        (change,) = _I32.unpack_from(message, layout.change_offset)
-        (object_id,) = _U32.unpack_from(message, layout.object_id_offset)
-        (current,) = _U32.unpack_from(message, layout.current_offset)
-        if maximum == 0 or current > maximum or abs(change) > maximum:
-            return False
-        maxima[object_id].add(maximum)
-        changed = changed or change != 0
-        names_player = names_player or object_id < PLAYER_OBJECT_ID_LIMIT
-    return changed and names_player and all(len(values) == 1 for values in maxima.values())
-
-
 def _moved_own_object(own: OwnObjectProfileLayout | None, previous: ResourceProfileLayout,
-                      opcode: int) -> OwnObjectProfileLayout | None:
-    """The own_object layout with every source that is the resource message moved to ``opcode``."""
+                      layout: ResourceProfileLayout) -> OwnObjectProfileLayout | None:
+    """The own_object layout with every source that is the resource message moved to its new layout."""
     if own is None:
         return None
     sources = []
     for source in own.sources:
-        if (source.opcode, source.message_length, source.object_id_offset) == (
+        if (source.opcode, source.message_length, source.object_id_offset) != (
                 previous.opcode, previous.message_length, previous.object_id_offset):
-            sources.append(replace(source, opcode=opcode))
-        else:
             raise LayoutRelocationError(f"Own-object source 0x{source.opcode:04X} is not the resource message; "
                                         "relocation cannot check it, update it by hand")
+        sources.append(replace(source, opcode=layout.opcode, message_length=layout.message_length,
+                               object_id_offset=layout.object_id_offset))
     return replace(own, sources=tuple(sources))
 
 
 def _relocate(collector: FixedLengthCollector, previous: ResourceProfileLayout,
               own: OwnObjectProfileLayout | None, health: CaptureHealth) -> ResourceCalibrationResult:
     require_clean(health)
-    candidates = collector.candidates(previous.message_length)
-    passing = [opcode for opcode, frames in candidates.items() if _passes(frames, replace(previous, opcode=opcode))]
-    opcode = single("Resource", passing, len(candidates),
-                    f"use skills that cost resource ({MIN_RESOURCE_READINGS}+ times), or the message layout changed")
-    return ResourceCalibrationResult(replace(previous, opcode=opcode), _moved_own_object(own, previous, opcode),
-                                     previous, own, len(candidates[opcode]), health, datetime.now(UTC).isoformat())
+    found = discover(collector).resource
+    layout = replace(found.layout, flag=previous.flag, encoding=previous.encoding)
+    return ResourceCalibrationResult(layout, _moved_own_object(own, previous, layout), previous, own,
+                                     found.readings, health, datetime.now(UTC).isoformat())
 
 
 def relocate_resource_replay(path: str | Path, *, profile: OpcodeProfile,
                              ports: Iterable[int] = DEFAULT_SERVER_PORTS) -> ResourceCalibrationResult:
-    """Re-find the profile's resource opcode in a saved capture; never writes a file."""
+    """Find the profile's resource layout again in a saved capture; never writes a file."""
     previous = profile_layout(profile)
-    collector = FixedLengthCollector((previous.message_length,))
+    collector = discovery_collector()
     health = collect_replay(path, collector, ports=ports, label="Resource calibration")
     return _relocate(collector, previous, profile.own_object, health)
 
@@ -119,9 +92,9 @@ def relocate_resource_replay(path: str | Path, *, profile: OpcodeProfile,
 def relocate_resource_live(*, profile: OpcodeProfile, capture_seconds: float,
                            live_options: LiveCaptureOptions | None = None,
                            save_pcap: str | Path | None = None) -> ResourceCalibrationResult:
-    """Capture for ``capture_seconds`` while using skills, then re-find the resource opcode; never writes."""
+    """Capture for ``capture_seconds`` while moving and using skills, then find the layout again; never writes."""
     previous = profile_layout(profile)
-    collector = FixedLengthCollector((previous.message_length,))
+    collector = discovery_collector()
     health = collect_live(collector, capture_seconds=capture_seconds, label="Resource calibration",
                           live_options=live_options, save_pcap=save_pcap)
     return _relocate(collector, previous, profile.own_object, health)

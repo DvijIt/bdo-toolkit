@@ -1,8 +1,9 @@
-"""Shared pieces for re-finding fixed-length messages whose opcode moved after a patch.
+"""Shared pieces for re-finding fixed-length messages that moved after a patch.
 
-Relocation keeps a previous layout's message length and field offsets and
-searches only the opcode. The decoders' own checks decide which candidate
-is the message; a caller accepts exactly one candidate or none.
+A patch can move a message's opcode, change its length and reorder its
+fields, so the collector keeps every plain message of a range of lengths
+and the caller's checks find the layout again; a caller accepts exactly one
+candidate or none.
 """
 from collections import defaultdict
 from collections.abc import Iterable
@@ -92,10 +93,10 @@ class FixedLengthCollector:
     def kept(self) -> int:
         return self._kept
 
-    def candidates(self, length: int) -> dict[int, list[BDOFrame]]:
-        """Opcodes sent only at ``length``, with their messages."""
+    def fixed_length_candidates(self) -> dict[int, list[BDOFrame]]:
+        """Opcodes sent at one of the wanted lengths and no other, with their messages."""
         return {opcode: frames for opcode, frames in self._frames.items()
-                if self._seen_lengths[opcode] == {length}}
+                if len(self._seen_lengths[opcode]) == 1}
 
 
 def collect_replay(path: str | Path, collector: FixedLengthCollector, *, ports: Iterable[int],
@@ -124,16 +125,6 @@ def collect_live(collector: FixedLengthCollector, *, capture_seconds: float, lab
 def require_clean(health: CaptureHealth) -> None:
     if not isinstance(health, CaptureHealth) or not health.capture_is_clean:
         raise LayoutRelocationError("Calibration requires a clean, completed capture; capture again")
-
-
-def single(kind: str, passing: list[int], tried: int, hint: str) -> int:
-    """The one passing opcode, or an error that says why there is not one."""
-    if len(passing) == 1:
-        return passing[0]
-    if passing:
-        raise LayoutRelocationError(f"{kind}: {len(passing)} messages pass the checks "
-                                    f"({', '.join(f'0x{o:04X}' for o in passing)}); capture longer")
-    raise LayoutRelocationError(f"{kind}: none of {tried} candidate messages pass the checks; {hint}")
 
 
 def update_profile_sections(path: str | Path, sections: dict[str, Any], previous: dict[str, Any], *,
