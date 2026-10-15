@@ -780,6 +780,40 @@ def _snapshot_record(
     )
 
 
+def test_valencia_and_shakatu_equal_stack_counts_keep_contents_by_id():
+    accumulator = _CharacterStateAccumulator(
+        profile_source="test",
+        specs=(_storage_snapshot_spec(),),
+    )
+    for index, storage_id in enumerate((0x00E5, 0x0259), start=1):
+        accumulator.observe_record(
+            _snapshot_record(
+                timestamp=1.0 + index * 0.01,
+                sequence=index * 300,
+                storage=True,
+                storage_id=storage_id,
+                instance_byte=index,
+                item_id=7003,
+                quantity=index * 5,
+            ),
+            b"",
+        )
+
+    state = accumulator.snapshot()
+    valencia = state.storages.by_id(0x00E5)
+    shakatu = state.storages.by_id(0x0259)
+    assert valencia is not None and shakatu is not None
+    assert state.storages.named("Valencia City") is valencia
+    assert state.storages.named("Shakatu") is shakatu
+    assert valencia.name_confidence == shakatu.name_confidence == "inferred"
+    assert valencia.occupied_stacks == shakatu.occupied_stacks == 1
+    assert valencia.quantity_for(7003) == 5
+    assert shakatu.quantity_for(7003) == 10
+    assert valencia.items[0].instance != shakatu.items[0].instance
+    assert valencia.to_dict()["name"] == "Valencia City"
+    assert shakatu.to_dict()["name"] == "Shakatu"
+
+
 def _storage_snapshot_spec() -> EventSpec:
     return EventSpec(
         label="INVENTORY_TO_STORAGE",

@@ -36,6 +36,10 @@ def print_event(event: BDOEvent) -> None:
         fields.append(f"destination={destination!r}")
         fields.append(f"storage_id=0x{event.storage_id:08x}")
     fields.extend((f"item_id={event.item_id}", f"quantity={event.quantity}"))
+    if event.base_item_id is not None:
+        fields.append(f"base_item_id={event.base_item_id}")
+    if event.enhancement_level is not None:
+        fields.append(f"enhancement_level={event.enhancement_level}")
     print(" ".join(fields), flush=True)
 
 

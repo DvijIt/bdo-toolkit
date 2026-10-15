@@ -16,6 +16,7 @@ import pytest
 from fixture_paths import (
     all_fixture_pcaps,
     baseline_path_for_fixture,
+    optional_fixture_path,
     opcode_profile_for_fixture,
 )
 from bdo_toolkit import replay_pcap
@@ -83,6 +84,22 @@ def test_fixture_matches_baseline(pcap: Path):
         for line in baseline_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    if pcap == optional_fixture_path('inventory--character-switch--4016c4bfa8'):
+        # Preserve the reviewed historical baseline byte-for-byte. The 2026-10-09
+        # registry correction changes only these two inferred display names:
+        # all 2,530 events were compared; 54 names per ID differed and every
+        # other semantic field matched. Actual output is never normalized.
+        corrected_names = {
+            229: ("Shakatu", "Valencia City"),
+            601: ("Valencia City", "Shakatu"),
+        }
+        for payload in expected:
+            correction = corrected_names.get(payload.get("storage_id"))
+            if correction is not None:
+                old_name, new_name = correction
+                assert payload["storage_name"] == old_name
+                assert payload["storage_name_confidence"] == "inferred"
+                payload["storage_name"] = new_name
     # Every reviewed baseline uses its catalog-pinned profile; missing authority
     # is an error rather than a fallback to another generation.
     actual = [

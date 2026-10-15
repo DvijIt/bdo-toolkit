@@ -4,7 +4,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/bdo-toolkit?style=flat-square&label=version)](https://pypi.org/project/bdo-toolkit/)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://github.com/ychwu/bdo-toolkit/blob/main/pyproject.toml)
 ![Tested on NA/EU](https://img.shields.io/badge/tested-NA%2FEU-5b61a8?style=flat-square)
-[![Package: Stable](https://img.shields.io/badge/package-stable-2f855a?style=flat-square)](https://ychwu.github.io/bdo-toolkit/#stability)
+[![Package: Stable](https://img.shields.io/badge/package-stable-2f855a?style=flat-square)](https://ychwu.github.io/bdo-toolkit/#overview/architecture)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f855a?style=flat-square)](https://github.com/ychwu/bdo-toolkit/blob/main/LICENSE)
 
 Passive, read-only Python tooling that turns live or recorded Black Desert
@@ -43,7 +43,7 @@ combines supported observations in one live session.
 | Inventory and town storage | A finite `ItemStateSnapshot` assembled from character-load traffic, with inventory, known balances, and observed town storage | [Inventory & town storage](https://ychwu.github.io/bdo-toolkit/#item-state-overview) | Beta |
 | Arena of Solare leaderboards | A finite `SolareCaptureResult` containing overall rankings, class tables, and player statistics when the capture is complete | [Arena of Solare](https://ychwu.github.io/bdo-toolkit/#solare-overview) | Beta |
 | Grind tracking | One capture for confirmed mob drops, with optional profile-based Agris and solo XP | [GrindSession](https://ychwu.github.io/bdo-toolkit/#grind-session) | Experimental |
-| Raw server messages | Every length-framed server-to-client message, opcode-free and undecoded, for protocol research | `bdo_toolkit.raw` docstrings | Experimental |
+| Raw server messages | Every length-framed server-to-client message, opcode-free and undecoded, for protocol research | [Raw server messages](https://ychwu.github.io/bdo-toolkit/#raw-messages) | Experimental |
 
 The standalone workflows include synchronous and
 [asyncio](https://ychwu.github.io/bdo-toolkit/#asyncio) sessions, capture and

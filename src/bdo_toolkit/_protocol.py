@@ -136,8 +136,10 @@ STORAGE_LOCATIONS: dict[int, StorageLocation] = {
     0x006B: StorageLocation("Keplan", "inferred"),
     0x007E: StorageLocation("Trent", "inferred"),
     0x00B6: StorageLocation("Iliya Island", "inferred"),
-    0x00E5: StorageLocation("Shakatu", "inferred"),
-    0x0259: StorageLocation("Valencia City", "inferred"),
+    # Corrected against region IDs and an operator-reported name swap. Equal
+    # snapshot counts alone cannot establish either name; retain inferred confidence.
+    0x00E5: StorageLocation("Valencia City", "inferred"),
+    0x0259: StorageLocation("Shakatu", "inferred"),
     0x026B: StorageLocation("Ancado Inner Harbor", "inferred"),
     0x02DF: StorageLocation("Grana", "inferred"),
     0x04BA: StorageLocation("Dalbeol Village", "inferred"),

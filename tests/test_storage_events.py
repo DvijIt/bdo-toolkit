@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from bdo_toolkit import EventFilter, storage_location
 from bdo_toolkit._engine import toolkit_event_from_record
 from bdo_toolkit._protocol import FlowKey, LootEvent, PacketContext
@@ -63,6 +65,38 @@ def test_live_storage_delta_exposes_canonical_destination_fields():
     assert event.storage_id == 0x0020
     assert event.storage_name == "Heidel"
     assert event.storage_name_confidence == "observed"
+
+
+@pytest.mark.parametrize(
+    ("storage_id", "name"),
+    ((0x00E5, "Valencia City"), (0x0259, "Shakatu")),
+)
+@pytest.mark.parametrize("operation", ("live", "snapshot"))
+@pytest.mark.parametrize("explicit_id", (True, False))
+def test_valencia_and_shakatu_names_preserve_numeric_destinations(
+    storage_id, name, operation, explicit_id,
+):
+    location = storage_location(storage_id)
+    assert location.name == name
+    assert location.confidence == "inferred"
+    event = toolkit_event_from_record(
+        _storage_record(
+            context=storage_id.to_bytes(4, "little"),
+            operation=operation,
+            storage_id=storage_id if explicit_id else None,
+        )
+    )
+
+    assert event.storage_id == storage_id
+    assert event.storage_name == name
+    assert event.storage_name_confidence == "inferred"
+    assert event.event_type == (
+        "storage_delta" if operation == "live" else "storage_snapshot"
+    )
+    assert EventFilter(storage_ids={storage_id}).allows(event)
+    other_id = 0x0259 if storage_id == 0x00E5 else 0x00E5
+    assert not EventFilter(storage_ids={other_id}).allows(event)
+    assert event.to_dict()["storage_name"] == name
 
 
 def test_angavu_storage_delta_uses_registered_town_name():

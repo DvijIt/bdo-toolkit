@@ -4,6 +4,13 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## 1.0.8 - 2026-10-14
+
+This patch adds raw server-message capture and corrects two reversed
+storage-town names.
+
 ### Added
 
 - Add opcode-free raw server message capture. The separate `bdo_toolkit.raw`
@@ -18,6 +25,15 @@ All notable released changes to `bdo-toolkit` are documented here.
   that attach mid-stream skip leading bytes, and messages accepted while
   resynchronizing after a TCP gap are not verified. The live event queue
   defaults to `DEFAULT_RAW_EVENT_QUEUE_SIZE` (16,384 messages).
+  Contributed by @iSayZes in [#10](https://github.com/ychwu/bdo-toolkit/pull/10).
+
+### Fixed
+
+- Correct Valencia City and Shakatu storage names. Destination 229 (`0x00E5`)
+  now reports Valencia City, and destination 601 (`0x0259`) reports Shakatu
+  in storage lookups, decoded events, and item-state snapshots. Numeric IDs,
+  item contents, and inferred name confidence remain unchanged. Applications
+  maintaining their own town-name tables should apply the same correction.
 
 ## 1.0.7 - 2026-10-01
 

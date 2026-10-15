@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib.util
 import io
 import json
@@ -107,6 +108,24 @@ def test_transfer_examples_render_known_unknown_and_unavailable_destinations(
     assert observed["event_filter"] is worker_log.WORKER_PRODUCTIONS
     assert worker_log.WORKER_PRODUCTIONS.event_types == frozenset({"storage_delta"})
     assert worker_log.WORKER_PRODUCTIONS.sources == frozenset({"Worker Production"})
+
+
+def test_live_transfer_log_displays_enhanced_item_fields(capsys) -> None:
+    transfer_log = _load_example("live_transfer_log.py")
+    ordinary = _storage_event(storage_id=None, storage_name=None)
+    enhanced = replace(
+        ordinary,
+        item_id=(2 << 24) | 12031,
+        base_item_id=12031,
+        enhancement_level=2,
+    )
+
+    transfer_log.print_event(ordinary)
+    transfer_log.print_event(enhanced)
+    ordinary_line, enhanced_line = capsys.readouterr().out.splitlines()
+    assert "base_item_id=" not in ordinary_line
+    assert "enhancement_level=" not in ordinary_line
+    assert "item_id=33566463 quantity=1 base_item_id=12031 enhancement_level=2" in enhanced_line
 
 
 def test_console_and_jsonl_writers_emit_one_canonical_event() -> None:
