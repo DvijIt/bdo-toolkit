@@ -16,6 +16,8 @@ private-captures/
 
 # Local tooling and Arena of Solare protocol research
 tools/
+examples/solare_daily_import.py
+tests/test_solare_daily_import.py
 
 # Local calibration output
 opcodes_backups/
