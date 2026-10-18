@@ -25,6 +25,7 @@ from ._constants import (
     ADVANCED_SPEC_BY_CLASS,
     EMPTY_CLASS_CODE,
     EMPTY_SPEC_CODE,
+    SOLARE_RICH_RECORD_COUNTS,
     class_name,
 )
 from ._discovery import DiscoveredSolareFamily
@@ -38,8 +39,6 @@ from .models import (
     SolareSpecialization,
 )
 
-_EXPECTED_RICH_RECORDS = 620
-_EXPECTED_RICH_FRAMES = _EXPECTED_RICH_RECORDS // 2
 _EXPECTED_OVERALL_RECORDS = 100
 _EXPECTED_OVERALL_FRAMES = _EXPECTED_OVERALL_RECORDS // 2
 _CLASS_SLOT_COUNT = 3
@@ -587,23 +586,25 @@ def decode_solare_details(
     """
 
     retain_raw_extensions = validate_retain_raw_extensions(retain_raw_extensions)
+    if rich.record_count not in SOLARE_RICH_RECORD_COUNTS:
+        return None
     layout = _rich_layout_for(rich)
     if layout is None:
         return None
     locations = _record_locations(
         rich_frames,
-        expected_frames=_EXPECTED_RICH_FRAMES,
+        expected_frames=rich.record_count // 2,
         frame_length=layout.frame_length,
         record_stride=layout.record_stride,
         required_record_end=layout.required_record_end,
     )
-    if locations is None or len(locations) != _EXPECTED_RICH_RECORDS:
+    if locations is None or len(locations) != rich.record_count:
         return None
     if not (
         len(rich.names)
         == len(rich.ranks)
         == len(rich.class_codes)
-        == _EXPECTED_RICH_RECORDS
+        == rich.record_count
     ):
         return None
 
@@ -648,8 +649,8 @@ def decode_solare_details(
         primary_codes.append(primary.code)
 
     if (
-        len({player.name for player in players}) != _EXPECTED_RICH_RECORDS
-        or len({player.global_rank for player in players}) != _EXPECTED_RICH_RECORDS
+        len({player.name for player in players}) != rich.record_count
+        or len({player.global_rank for player in players}) != rich.record_count
         or tuple(player.global_rank for player in players[:20]) != tuple(range(1, 21))
         or any(
             left.global_rank >= right.global_rank

@@ -89,6 +89,28 @@ class SolareRawSection:
 
 
 @dataclass(frozen=True)
+class SolareEquipment:
+    """One equipment slot; crystal positions preserve zero and repeated IDs.
+
+    Slot codes are wire identifiers, not class-slot indices. Unknown fields
+    preserve tuple columns 2, 5, 6, 7 and 8 without assigning meanings.
+    """
+
+    slot_code: int
+    item_id: int
+    crystal_ids: tuple[int, int]
+    unknown_fields: tuple[int, ...] = (0, 0, 0, 0, 0)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "slot_code": self.slot_code,
+            "item_id": self.item_id,
+            "crystal_ids": list(self.crystal_ids),
+            "unknown_fields": list(self.unknown_fields),
+        }
+
+
+@dataclass(frozen=True)
 class SolareClassPerformance:
     """One occupied class slot from a validated Solare player record.
 
@@ -111,6 +133,8 @@ class SolareClassPerformance:
     recent_results_wire_text: Optional[str] = None
     gear_loadout_raw: Optional[SolareRawSection] = None
     skill_addons_raw: Optional[SolareRawSection] = None
+
+    equipment: Optional[tuple[SolareEquipment, ...]] = field(default=None, kw_only=True)
 
     @property
     def win_rate(self) -> Optional[float]:
@@ -147,6 +171,8 @@ class SolareClassPerformance:
             output["recent_results_raw"] = list(self.recent_results_raw)
         if self.recent_results_wire_text is not None:
             output["recent_results_wire_text"] = self.recent_results_wire_text
+        if self.equipment is not None:
+            output["equipment"] = [item.to_dict() for item in self.equipment]
         if include_raw:
             if self.gear_loadout_raw is not None:
                 output["gear_loadout_raw"] = self.gear_loadout_raw.to_dict()
@@ -620,6 +646,8 @@ def solare_snapshot_id(
                         "draws": item.draws,
                         "losses": item.losses,
                         "history": list(item.recent_results_raw),
+                        **({"equipment": [gear.to_dict() for gear in item.equipment]}
+                           if item.equipment is not None else {}),
                     }
                     for item in player.classes_played
                 ],
@@ -699,6 +727,8 @@ def _class_performance_semantics(
         "losses": performance.losses,
         "history": list(performance.recent_results_raw),
     }
+    if performance.equipment is not None:
+        output["equipment"] = [item.to_dict() for item in performance.equipment]
     if include_primary:
         output["primary"] = performance.primary
     if performance.recent_results_wire_text is not None:
@@ -740,6 +770,8 @@ def _available_overall_details_agree(
             class_slot.specialization is None
             or overall_slot.specialization.code != class_slot.specialization.code
         ):
+            return False
+        if overall_slot.equipment is not None and overall_slot.equipment != class_slot.equipment:
             return False
         for field_name in ("matches", "wins", "draws", "losses"):
             overall_value = getattr(overall_slot, field_name)

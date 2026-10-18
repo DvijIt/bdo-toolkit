@@ -12,6 +12,8 @@ from bdo_toolkit._protocol import BDOFrame, FlowKey
 from ._constants import (
     BDO_HEADER_SIZE,
     CLASS_NAMES,
+    SOLARE_CLASS_ROSTERS,
+    SOLARE_RICH_RECORD_COUNTS,
     DISCOVERY_FIELD_SCAN_LIMIT,
     DISCOVERY_MAX_CLASS_GROUPS,
     DISCOVERY_MAX_FAMILY_DISTANCE,
@@ -419,14 +421,12 @@ def _discover_rich_family(
     class_offset, class_codes, class_counts = class_field
     if len(ranked.names) != sum(count for _code, count in class_counts):
         return None
-    # A balanced prefix is not a complete leaderboard.  The three validated
-    # generations all carry every currently known Arena class exactly twenty
-    # times (31 x 20 = 620). Requiring that full roster prevents a capture gap
-    # that happens to leave 20 balanced class groups from being promoted as an
-    # atomic snapshot. A newly added/removed class therefore fails closed until
-    # the toolkit's class registry is reviewed.
-    expected_class_counts = tuple((code, 20) for code in sorted(CLASS_NAMES))
-    if class_counts != expected_class_counts:
+    # Accept only reviewed complete rosters, retaining historical generations.
+    # Balanced subsets and unreviewed extra classes still fail closed.
+    if not any(
+        class_counts == tuple((code, 20) for code in sorted(roster))
+        for roster in SOLARE_CLASS_ROSTERS
+    ):
         return None
     return DiscoveredSolareFamily(
         role="rich",
@@ -1047,16 +1047,34 @@ def discover_solare(
                     if menu_context is not None:
                         menu_contexts.append(menu_context)
         reset_starts = analysis_cache.rank_reset_starts(key, group)
-        for window in _rank_reset_windows(
-            group,
-            310,
-            _starts=reset_starts,
-        ):
+        windows = (
+            window
+            for record_count in sorted(SOLARE_RICH_RECORD_COUNTS)
+            for window in _rank_reset_windows(
+                group, record_count // 2, _starts=reset_starts,
+            )
+        )
+        for window in windows:
             ranked, rich = analysis_cache.ranked_and_rich(
                 key,
                 window,
                 observation_ordinals,
             )
+            if rich is not None and rich.record_count < max(SOLARE_RICH_RECORD_COUNTS):
+                # An old-roster prefix can precede the new class. Do not
+                # promote it while a same-generation continuation is visible
+                # or the live response still has an open trailing boundary.
+                end = next(i for i, frame in enumerate(group) if frame is window[-1])
+                if end + 1 < len(group):
+                    following = group[end + 1]
+                    if _u32le(following.message, rich.rank_offset) != 1:
+                        rich = None
+                elif not allow_trailing_overall and not any(
+                    observation_ordinals[id(frame)] > rich.completion_observation_ordinal
+                    and _family_key(frame) != key
+                    for frame in unique_frames
+                ):
+                    rich = None
             if ranked is not None:
                 ranked_candidates.append(ranked)
                 if rich is not None:

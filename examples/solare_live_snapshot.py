@@ -272,7 +272,7 @@ for entry in snapshot.overall_top_100[:10]:
             )
         print(f"     class slot {performance.slot}: {class_label}; {class_record}")
 
-# Class leaderboards are decoded independently from the separate 31 x top-20
+# Class leaderboards are decoded independently from the separate supported class top-20
 # response. Query them directly rather than treating overall rows as their
 # data source.
 example_class = snapshot.players[0].primary_class

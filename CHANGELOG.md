@@ -6,6 +6,47 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.9 - 2026-10-18
+
+This release expands Solare roster and equipment support, improves performance
+inference, and restores inventory labels for prefix-slot hydration layouts.
+
+### Added
+
+- Support Agent in Solare leaderboard snapshots. Recognize class code 35 and
+  complete 32-class responses while preserving historical 31-class captures.
+  Live discovery and detail extraction support both reviewed roster sizes,
+  including Elo inference; short class boards remain unsupported and unproven
+  performance fields remain unavailable.
+- Decode Solare equipment and crystals per class loadout. Validated loadouts
+  expose all 14 equipment slots and both crystal positions, preserving repeated
+  IDs and zero positions independently of raw addon retention. A table reports
+  the equipment capability only when every occupied loadout validates.
+  Available equipment is included in ordinary JSON and semantic snapshot identity.
+
+### Fixed
+
+- Restore inventory labels for hydration records with prefix slots. Container
+  and currency classification now supports slots before the item field with
+  container codes at the record tail, retaining bounded geometry checks and
+  rejection of ambiguous layouts, duplicate slots, and unknown container codes.
+- Infer Solare performance in qualifying captures without draws using a unique
+  draw-array boundary among independently validated fields. Ambiguous or
+  malformed layouts still withhold performance; aggregate totals and raw
+  extensions retain independent validation.
+- Accept completely empty Solare addon slots in any occupied class position.
+  Populated records establish unique boundaries without an empty-block
+  percentage limit, restoring affected performance and equipment discovery
+  without inferring offsets from entirely empty tables.
+- Validate partial Solare addon lists without population thresholds. Each
+  occupied block and its zero padding must validate; malformed lists and
+  ambiguous boundaries remain rejected.
+- Discover Solare outcomes without requiring low-match players. Recent-history
+  bounds and a bounded expanded match-total search support experienced-player
+  boards with positive outcome counters. Independently validated matching
+  records can corroborate either table; geometry, capture integrity, and unique
+  interpretation checks remain required.
+
 ## 1.0.8 - 2026-10-14
 
 This patch adds raw server-message capture and corrects two reversed

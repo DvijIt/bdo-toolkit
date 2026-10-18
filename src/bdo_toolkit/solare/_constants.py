@@ -76,7 +76,21 @@ CLASS_NAMES: dict[int, str] = {
     32: "Seraph",
     33: "Dosa",
     34: "Deadeye",
+    35: "Agent",
 }
+
+# Reviewed complete rosters; display-name additions must not invalidate history.
+_HISTORICAL_CLASS_ROSTER = frozenset({
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17,
+    19, 20, 21, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+})
+SOLARE_CLASS_ROSTERS = (
+    _HISTORICAL_CLASS_ROSTER,
+    _HISTORICAL_CLASS_ROSTER | {35},
+)
+SOLARE_RICH_RECORD_COUNTS = frozenset(
+    len(roster) * 20 for roster in SOLARE_CLASS_ROSTERS
+)
 
 ADVANCED_SPEC_BY_CLASS: dict[int, str] = {
     3: "Ascension",

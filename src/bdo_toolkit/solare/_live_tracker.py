@@ -145,6 +145,7 @@ class LiveSolareDiscoveryTracker:
                     first_count + 249,
                     first_count + 299,
                     first_count + 309,
+                    first_count + 319,
                 }
             )
         reset_interval = family_count in self._family_targets.get(
@@ -160,6 +161,7 @@ class LiveSolareDiscoveryTracker:
             250,
             300,
             310,
+            320,
         }
         related_interval = (
             ranked_known

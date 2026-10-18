@@ -148,7 +148,19 @@ def _discover_inventory_tail_layout(
     window_start = max(0, stride - _INVENTORY_TRAILING_DISCOVERY_BYTES)
     candidates: list[tuple[int, int]] = []
 
-    for slot_relative in range(window_start, stride):
+    # Slots can precede the item field while container codes remain at the
+    # end of that record. Search a bounded prefix as well as the tail; never
+    # substitute the next record's slot for a missing final-record field.
+    # The base length bounds the prefix to bytes outside the previous record's
+    # item-relative payload, avoiding a shifted copy of an existing tail slot.
+    prefix_start = max(
+        -4,
+        max(
+            int(spec.single_record_message_length or 0) - stride - spec.item_offset
+            for _, _, spec, _ in frame_groups
+        ),
+    )
+    for slot_relative in (*range(prefix_start, 0), *range(window_start, stride)):
         slot_groups: list[list[int]] = []
         for frame, group, _, _ in frame_groups:
             ordered = sorted(group, key=lambda event: int(event.record_offset or 0))
@@ -156,7 +168,7 @@ def _discover_inventory_tail_layout(
                 frame.message[int(event.record_offset) + slot_relative]
                 for event in ordered
                 if event.record_offset is not None
-                and int(event.record_offset) + slot_relative < len(frame.message)
+                and 0 <= int(event.record_offset) + slot_relative < len(frame.message)
             ]
             slot_groups.append(slots)
         if any(
@@ -176,9 +188,10 @@ def _discover_inventory_tail_layout(
         # Observed generations serialize these neighboring fields in both
         # orders. Keep the bounded tail search, but do not treat their order as
         # part of the protocol invariant.
+        slot_tail_position = slot_relative % stride
         for container_relative in range(
-            max(window_start, slot_relative - 4),
-            min(stride, slot_relative + 5),
+            max(window_start, slot_tail_position - 4),
+            min(stride, slot_tail_position + 5),
         ):
             if container_relative == slot_relative:
                 continue
@@ -280,7 +293,10 @@ def _inventory_record_metadata(
         assert event.record_offset is not None
         slot_offset = event.record_offset + slot_relative
         container_offset = event.record_offset + container_relative
-        if max(slot_offset, container_offset) >= len(frame.message):
+        if (
+            min(slot_offset, container_offset) < 0
+            or max(slot_offset, container_offset) >= len(frame.message)
+        ):
             return None
         slot = frame.message[slot_offset]
         code = frame.message[container_offset]

@@ -13,13 +13,19 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Optional, Sequence
 
 from bdo_toolkit._protocol import BDOFrame
 
-from ._constants import EMPTY_CLASS_CODE, EMPTY_SPEC_CODE, class_name
+from ._constants import (
+    EMPTY_CLASS_CODE,
+    EMPTY_SPEC_CODE,
+    SOLARE_RICH_RECORD_COUNTS,
+    class_name,
+)
 from ._details import (
     _ADDON_SLOT_SIZE,
     _CLASS_SLOT_COUNT,
@@ -41,19 +47,20 @@ from ._discovery import DiscoveredSolareFamily
 from .models import (
     SolareClass,
     SolareClassPerformance,
+    SolareEquipment,
     SolareOverallEntry,
     SolarePlayer,
 )
 
 
-_EXPECTED_RICH_RECORDS = 620
-_EXPECTED_RICH_FRAMES = _EXPECTED_RICH_RECORDS // 2
 _EXPECTED_OVERALL_RECORDS = 100
 _EXPECTED_OVERALL_FRAMES = _EXPECTED_OVERALL_RECORDS // 2
 _MIN_ELO_DISTINCT = 20
 _MAX_LEARNED_ELO = 0xFFFF
 _MAX_LEARNED_COUNTER = 0xFFFF
-_MAX_MATCH_CANDIDATES = 2
+# Experienced-player boards can make all outcome arrays positive, including
+# nearby byte-shift aliases. Let balanced-counter validation resolve them.
+_MAX_MATCH_CANDIDATES = 8
 _MAX_COUNTER_CANDIDATES = 64
 _MAX_PREFILTER_CANDIDATES = 128
 _MAX_ACTIVE_OUTCOME_PREFILTER_CANDIDATES = 4096
@@ -456,9 +463,91 @@ def _outcome_candidates(
     return tuple(candidates)
 
 
+def _anchored_zero_outcome_offsets(
+    records: _RecordTable,
+    occupancies: Sequence[int],
+    matches_offset: int,
+    matches: tuple[int, ...],
+    outcomes: tuple[tuple[int, tuple[int, ...]], ...],
+) -> tuple[int, ...]:
+    """Locate zero counters by bounded field geometry, never by zero scans.
+
+    Require two complementary active outcomes and independently validated
+    text-array boundaries. Across the tail from class codes to record end,
+    exactly one 12-byte gap may remain; other gaps are at most three bytes
+    of patch padding. No arbitrary zero region is promoted to an outcome.
+    The normal solution search still rejects multiple interpretations.
+    """
+    complementary = tuple(
+        (first_offset, second_offset)
+        for index, (first_offset, first) in enumerate(outcomes)
+        for second_offset, second in outcomes[index + 1:]
+        if all(a + b == total for a, b, total in zip(first, second, matches))
+    )
+    if not complementary:
+        return ()
+    rows = records.rows
+    class_field = records.family.class_offset
+    if class_field is None:
+        learned_class = _learn_overall_class_offset(records)
+        if learned_class is None:
+            return ()
+        class_field = learned_class[0]
+    spec = _learn_spec_offset(rows, occupancies)
+    history = _history_candidates(rows, occupancies, matches_offset)
+    elos = _elo_candidates(records)
+    if spec is None or len(history) != 1 or len(elos) != 1:
+        return ()
+    gear = _raw_base_candidates(
+        rows, occupancies, value_count=126, slot_size=_GEAR_SLOT_SIZE,
+        minimum_text_length=300, maximum_text_length=500,
+    )
+    addons = _raw_base_candidates(
+        rows, occupancies, value_count=12, slot_size=_ADDON_SLOT_SIZE,
+        minimum_text_length=20, maximum_text_length=100,
+        allow_empty_slots=True,
+    )
+    if len(gear) != 1 or len(addons) != 1:
+        return ()
+    fixed = [
+        (class_field, 3), (spec, 3), (matches_offset, 12),
+        (history[0], 3 * _HISTORY_SLOT_SIZE),
+        (gear[0], 3 * _GEAR_SLOT_SIZE),
+        (addons[0], 3 * _ADDON_SLOT_SIZE),
+    ]
+    if elos[0] >= class_field:
+        fixed.append((elos[0], 4))
+    candidates: set[int] = set()
+    for first_offset, second_offset in complementary:
+        intervals = sorted(fixed + [(first_offset, 12), (second_offset, 12)])
+        cursor = class_field
+        gaps: list[tuple[int, int]] = []
+        valid = True
+        for start, size in intervals:
+            if start < cursor or start + size > records.record_end:
+                valid = False
+                break
+            if start > cursor:
+                gaps.append((cursor, start - cursor))
+            cursor = start + size
+        if not valid:
+            continue
+        if cursor < records.record_end:
+            gaps.append((cursor, records.record_end - cursor))
+        wide = [(start, size) for start, size in gaps if size > 3]
+        if len(wide) != 1 or wide[0][1] != 12:
+            continue
+        offset = wide[0][0]
+        if all(row[offset:offset + 12] == bytes(12) for row in rows):
+            candidates.add(offset)
+    return tuple(sorted(candidates))
+
+
 def _balanced_counter_solution(
     rows: Sequence[bytes],
     occupancies: Sequence[int],
+    *,
+    records: Optional[_RecordTable] = None,
 ) -> Optional[tuple[int, tuple[int, int, int]]]:
     record_size = len(rows[0])
     occupied_activity = [0] * _CLASS_SLOT_COUNT
@@ -481,6 +570,13 @@ def _balanced_counter_solution(
         )
         if not outcomes:
             continue
+        if records is not None:
+            zero_offsets = _anchored_zero_outcome_offsets(
+                records, occupancies, matches_offset, matches, outcomes,
+            )
+            outcomes += tuple(
+                (offset, (0,) * len(matches)) for offset in zero_offsets
+            )
         by_vector: dict[tuple[int, ...], list[int]] = {}
         for offset, vector in outcomes:
             by_vector.setdefault(vector, []).append(offset)
@@ -575,6 +671,65 @@ def _history_candidates(
     return tuple(candidates)
 
 
+def _history_outcome_candidates(
+    rows: Sequence[bytes],
+    occupancies: Sequence[int],
+    matches_offset: int,
+    outcome_offsets: Sequence[int],
+    history_offset: int,
+    *,
+    minimum_discriminators: int = _MIN_HISTORY_DISCRIMINATORS,
+) -> tuple[tuple[int, int, int], ...]:
+    """Constrain lifetime outcomes with complete or bounded recent histories.
+
+    For a zero-draw record, equal/unequal history pairs give observed wins and
+    losses. A longer lifetime record must contain at least those counts. Draw
+    encoding is not established, so nonzero-draw long histories provide no
+    positive orientation evidence. Ambiguous supported mappings stay unavailable.
+    """
+    candidates: list[tuple[int, int, int]] = []
+    for wins_offset, draws_offset, losses_offset in itertools.permutations(outcome_offsets):
+        discriminators = 0
+        valid = True
+        for row, occupied in zip(rows, occupancies):
+            for slot in range(occupied):
+                matches = _u32le(row, matches_offset + slot * 4)
+                decoded = _decode_history_region(row[
+                    history_offset + slot * _HISTORY_SLOT_SIZE:
+                    history_offset + (slot + 1) * _HISTORY_SLOT_SIZE
+                ])
+                if decoded is None or len(decoded[1]) != 2 * min(matches, 5):
+                    valid = False
+                    break
+                codes = decoded[1]
+                equal = sum(codes[i] == codes[i + 1] for i in range(0, len(codes), 2))
+                unequal = len(codes) // 2 - equal
+                wins = _u32le(row, wins_offset + slot * 4)
+                draws = _u32le(row, draws_offset + slot * 4)
+                losses = _u32le(row, losses_offset + slot * 4)
+                if matches <= 5:
+                    if draws != 0 or wins != equal or losses != unequal:
+                        valid = False
+                        break
+                elif draws != 0:
+                    # A draw may occupy either pair category. These bounds
+                    # reject contradictions without assigning it an encoding.
+                    if wins + draws < equal or losses + draws < unequal:
+                        valid = False
+                        break
+                    continue
+                elif wins < equal or losses < unequal:
+                    valid = False
+                    break
+                if equal != unequal:
+                    discriminators += 1
+            if not valid:
+                break
+        if valid and discriminators >= minimum_discriminators:
+            candidates.append((wins_offset, draws_offset, losses_offset))
+    return tuple(candidates)
+
+
 def _orient_outcomes(
     rows: Sequence[bytes],
     occupancies: Sequence[int],
@@ -582,57 +737,62 @@ def _orient_outcomes(
     outcome_offsets: Sequence[int],
     history_offset: int,
 ) -> Optional[tuple[int, int, int]]:
-    valid_permutations: list[tuple[int, int, int]] = []
-    for wins_offset, draws_offset, losses_offset in itertools.permutations(
-        outcome_offsets
+    candidates = _history_outcome_candidates(
+        rows, occupancies, matches_offset, outcome_offsets, history_offset,
+    )
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _companion_outcomes_agree(
+    records: _RecordTable,
+    class_offset: int,
+    occupancies: Sequence[int],
+    matches_offset: int,
+    outcomes: tuple[int, int, int],
+    companion: _RecordTable,
+    known: _PerformanceOffsets,
+) -> bool:
+    by_name = {name: i for i, name in enumerate(companion.names)}
+    shared = 0
+    discriminating_names = 0
+    for row, name, rank, occupied in zip(
+        records.rows, records.names, records.ranks, occupancies,
     ):
-        discriminators = 0
-        valid = True
-        for row, occupied in zip(rows, occupancies):
-            for slot in range(occupied):
-                matches = _u32le(row, matches_offset + slot * 4)
-                if matches > 5:
-                    continue
-                decoded = _decode_history_region(
-                    row[
-                        history_offset
-                        + slot * _HISTORY_SLOT_SIZE : history_offset
-                        + (slot + 1) * _HISTORY_SLOT_SIZE
-                    ]
-                )
-                if decoded is None:
-                    valid = False
-                    break
-                _raw, codes = decoded
-                equal = sum(
-                    codes[index] == codes[index + 1]
-                    for index in range(0, len(codes), 2)
-                )
-                unequal = matches - equal
-                wins = _u32le(row, wins_offset + slot * 4)
-                draws = _u32le(row, draws_offset + slot * 4)
-                losses = _u32le(row, losses_offset + slot * 4)
-                if draws != 0 or wins != equal or losses != unequal:
-                    valid = False
-                    break
-                if wins != losses:
-                    discriminators += 1
-            if not valid:
-                break
-        if valid and discriminators >= _MIN_HISTORY_DISCRIMINATORS:
-            valid_permutations.append(
-                (wins_offset, draws_offset, losses_offset)
-            )
-    return valid_permutations[0] if len(valid_permutations) == 1 else None
+        ordinal = by_name.get(name)
+        if ordinal is None:
+            continue
+        other = companion.rows[ordinal]
+        if rank != companion.ranks[ordinal] or occupied != known.occupancies[ordinal]:
+            return False
+        discriminating = False
+        for slot in range(occupied):
+            if row[class_offset + slot] != other[known.class_offset + slot]:
+                return False
+            values = tuple(_u32le(row, offset + slot * 4)
+                           for offset in (matches_offset, *outcomes))
+            expected = tuple(_u32le(other, offset + slot * 4) for offset in (
+                known.matches_offset, known.wins_offset,
+                known.draws_offset, known.losses_offset,
+            ))
+            if values != expected:
+                return False
+            discriminating |= len(set(values[1:])) == 3
+        shared += 1
+        discriminating_names += discriminating
+    return shared >= 20 and discriminating_names >= _MIN_HISTORY_DISCRIMINATORS
 
 
 def _learn_performance_offsets(
     records: _RecordTable,
     class_offset: int,
     occupancies: tuple[int, ...],
+    *,
+    companion: Optional[tuple[_RecordTable, _PerformanceOffsets]] = None,
 ) -> Optional[_PerformanceOffsets]:
     spec_offset = _learn_spec_offset(records.rows, occupancies)
-    counters = _balanced_counter_solution(records.rows, occupancies)
+    counters = _balanced_counter_solution(
+        records.rows, occupancies, records=records,
+    )
     if spec_offset is None or counters is None:
         return None
     matches_offset, outcome_offsets = counters
@@ -651,6 +811,21 @@ def _learn_performance_offsets(
         outcome_offsets,
         history_offset,
     )
+    if oriented is None and companion is not None:
+        # The companion already has independent outcome authority. Local
+        # history must not contradict it, but no short-history witness is needed.
+        supported = tuple(
+            proposed for proposed in _history_outcome_candidates(
+                records.rows, occupancies, matches_offset, outcome_offsets,
+                history_offset, minimum_discriminators=0,
+            )
+            if _companion_outcomes_agree(
+                records, class_offset, occupancies, matches_offset, proposed,
+                companion[0], companion[1],
+            )
+        )
+        if len(supported) == 1:
+            oriented = supported[0]
     if oriented is None:
         return None
     wins_offset, draws_offset, losses_offset = oriented
@@ -701,13 +876,55 @@ def _raw_base_candidates(
     slot_size: int,
     minimum_text_length: int,
     maximum_text_length: int,
+    allow_empty_slots: bool = False,
 ) -> tuple[int, ...]:
     first = rows[0]
     candidates: list[int] = []
     required_end = _CLASS_SLOT_COUNT * slot_size
-    for offset in range(len(first) - required_end + 1):
+    offsets: Sequence[int] = range(len(first) - required_end + 1)
+    if allow_empty_slots:
+        # A blank first player cannot seed discovery. Gather text witnesses
+        # from every record, then validate the entire table at each boundary.
+        pattern = rb"(?<![0-9,])[0-9]+(?:,[0-9]+){" + str(value_count - 1).encode() + rb"}\x00"
+        witnessed = {
+            match.start() - slot * slot_size
+            for row in rows
+            for match in re.finditer(pattern, row)
+            for slot in range(_CLASS_SLOT_COUNT)
+            if 0 <= match.start() - slot * slot_size <= len(first) - required_end
+        }
+        offsets = sorted(witnessed)
+    for offset in offsets:
+        if allow_empty_slots:
+            # Addon boundary evidence permits zero to six complete pairs.
+            # Validate every occupied block, including its zero padding; a
+            # population percentage must not decide whether partial lists fit.
+            valid_blocks = True
+            for row, occupied in zip(rows, occupancies):
+                for slot in range(occupied):
+                    start = offset + slot * slot_size
+                    block = row[start:start + slot_size]
+                    if len(block) != slot_size:
+                        valid_blocks = False
+                        break
+                    if not any(block):
+                        continue
+                    shape = _csv_integer_count(row, start)
+                    if (shape is None or not 2 <= shape[0] <= value_count
+                            or shape[0] % 2 or shape[1] > maximum_text_length
+                            or any(block[shape[1]:])):
+                        valid_blocks = False
+                        break
+                if not valid_blocks:
+                    break
+            if valid_blocks and all(any(n > slot for n in occupancies)
+                                    for slot in range(_CLASS_SLOT_COUNT)):
+                candidates.append(offset)
+                if len(candidates) > 1:
+                    return ()
+            continue
         first_shape = _csv_integer_count(first, offset)
-        if (
+        if not allow_empty_slots and (
             first_shape is None
             or first_shape[0] != value_count
             or not minimum_text_length <= first_shape[1] <= maximum_text_length
@@ -716,6 +933,8 @@ def _raw_base_candidates(
         valid = True
         for row in rows:
             shape = _csv_integer_count(row, offset)
+            if allow_empty_slots and not any(row[offset : offset + slot_size]):
+                continue
             if (
                 shape is None
                 or shape[0] != value_count
@@ -742,7 +961,11 @@ def _raw_base_candidates(
                 break
             matching = 0
             for row in eligible:
-                shape = _csv_integer_count(row, offset + slot * slot_size)
+                start = offset + slot * slot_size
+                if allow_empty_slots and not any(row[start:start + slot_size]):
+                    matching += 1
+                    continue
+                shape = _csv_integer_count(row, start)
                 if (
                     shape is not None
                     and shape[0] == value_count
@@ -1310,11 +1533,13 @@ def learn_unknown_solare_details(
     cached or written to disk.
     """
 
+    if rich.record_count not in SOLARE_RICH_RECORD_COUNTS:
+        return None, None
     rich_records = _extract_records(
         rich_frames,
         rich,
-        expected_frames=_EXPECTED_RICH_FRAMES,
-        expected_records=_EXPECTED_RICH_RECORDS,
+        expected_frames=rich.record_count // 2,
+        expected_records=rich.record_count,
     )
     overall_records = _extract_records(
         overall_frames,
@@ -1386,6 +1611,16 @@ def learn_unknown_solare_details(
         and overall_class is not None
         else None
     )
+    if learn_overall and overall_performance is None and rich_performance is not None and overall_class is not None:
+        overall_performance = _learn_performance_offsets(
+            overall_records, overall_class[0], overall_class[1],
+            companion=(rich_records, rich_performance),
+        )
+    elif learn_rich and rich_performance is None and overall_performance is not None and rich.class_offset is not None and rich_occupancies is not None:
+        rich_performance = _learn_performance_offsets(
+            rich_records, rich.class_offset, rich_occupancies,
+            companion=(overall_records, overall_performance),
+        )
     rich_learned = _LearnedTable(
         rich_records,
         rich_elo if learn_rich else None,
@@ -1435,3 +1670,81 @@ def learn_unknown_solare_details(
         _decode_learned_rich(rich_learned) if learn_rich else None,
         _decode_learned_overall(overall_learned) if learn_overall else None,
     )
+
+
+_EQUIPMENT_SLOT_CODES = (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 27, 29)
+
+
+def _parse_equipment(data: bytes) -> Optional[tuple[SolareEquipment, ...]]:
+    """Validate the observed 14 x 9 CSV grammar without collapsing duplicates."""
+    if len(data) != _GEAR_SLOT_SIZE or b"\0" not in data:
+        return None
+    text = data.split(b"\0", 1)[0]
+    tokens = text.split(b",")
+    if len(tokens) != 126 or any(not t.isdigit() or len(t) > 10 for t in tokens):
+        return None
+    values = [int(token) for token in tokens]
+    if any(value > 0xFFFFFFFF for value in values):
+        return None
+    groups = [values[i:i + 9] for i in range(0, 126, 9)]
+    if tuple(g[0] for g in groups) != _EQUIPMENT_SLOT_CODES:
+        return None
+    if any(g[1] == 0 for g in groups):
+        return None
+    return tuple(
+        SolareEquipment(
+            slot_code=g[0],
+            item_id=g[1],
+            crystal_ids=(g[3], g[4]),
+            unknown_fields=(g[2], g[5], g[6], g[7], g[8]),
+        )
+        for g in groups
+    )
+
+
+def decode_equipment_table(
+    frames: Sequence[BDOFrame],
+    family: DiscoveredSolareFamily,
+    entries: Sequence[SolarePlayer] | Sequence[SolareOverallEntry],
+    *,
+    gear_offset: Optional[int] = None,
+) -> Optional[dict[str, tuple[SolareClassPerformance, ...]]]:
+    """Validate equipment independently of addons, for every occupied class slot.
+
+    Registered geometries supply their pinned boundary; only unknown geometries
+    use the bounded CSV boundary finder. Existing class ownership is required.
+    A failed slot withholds equipment for this table, preserving other details.
+    """
+    by_name = {entry.name: entry for entry in entries}
+    if len(by_name) != family.record_count or any(not e.classes_played for e in entries):
+        return None
+    records = _extract_records(
+        frames, family,
+        expected_frames=family.frame_count,
+        expected_records=family.record_count,
+    )
+    if records is None:
+        return None
+    occupancies = tuple(len(by_name[name].classes_played) for name in records.names)
+    if gear_offset is None:
+        candidates = _raw_base_candidates(
+            records.rows, occupancies,
+            value_count=126,
+            slot_size=_GEAR_SLOT_SIZE,
+            minimum_text_length=300,
+            maximum_text_length=500,
+        )
+        if len(candidates) != 1:
+            return None
+        gear_offset = candidates[0]
+    output: dict[str, tuple[SolareClassPerformance, ...]] = {}
+    for name, row in zip(records.names, records.rows):
+        slots = []
+        for performance in by_name[name].classes_played:
+            start = gear_offset + performance.slot * _GEAR_SLOT_SIZE
+            equipment = _parse_equipment(row[start:start + _GEAR_SLOT_SIZE])
+            if equipment is None:
+                return None
+            slots.append(replace(performance, equipment=equipment))
+        output[name] = tuple(slots)
+    return output

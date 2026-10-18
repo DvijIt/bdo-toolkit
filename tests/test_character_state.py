@@ -266,16 +266,18 @@ def _synthetic_inventory_tail_group(
     count: int = 3,
     slot_start: int = 2,
     item_id_start: int = 7003,
+    trailing_trim: int = 0,
     decoy_slot_relative: int | None = None,
     decoy_container_relative: int | None = None,
 ) -> tuple[BDOFrame, list[BDOEvent], EventSpec, int]:
     item_offset = 31
-    base_length = item_offset + stride
+    base_length = item_offset + stride - trailing_trim
     message_length = base_length + (count - 1) * stride
     message = bytearray(message_length)
     message[:2] = message_length.to_bytes(2, "little")
     message[3:5] = (0x194A).to_bytes(2, "little")
-    message[27:31] = CHARACTER_LOAD_CONTEXT
+    context_offset = 6 if slot_relative < 0 else 27
+    message[context_offset:context_offset + 4] = CHARACTER_LOAD_CONTEXT
     flow_key = FlowKey("10.0.0.1", 8889, "10.0.0.2", 50000)
     flow = Flow("10.0.0.1", 8889, "10.0.0.2", 50000)
     records: list[BDOEvent] = []
@@ -319,11 +321,66 @@ def _synthetic_inventory_tail_group(
         item_offset=item_offset,
         quantity_offset=item_offset + 4,
         min_message_length=base_length,
-        source_context_offset=27,
+        source_context_offset=context_offset,
         item_instance_offset=66,
         single_record_message_length=base_length,
     )
     return frame, records, spec, stride
+
+
+@pytest.mark.parametrize("stride", [223, 230])
+def test_inventory_prefix_slots_restore_containers_and_currency_balances(stride):
+    groups = [
+        _synthetic_inventory_tail_group(
+            sequence=100 + index,
+            stride=stride,
+            slot_relative=-1,
+            container_relative=stride - 2,
+            container_code=code,
+            count=count,
+            item_id_start=item,
+            trailing_trim=1,
+        )
+        for index, (code, count, item) in enumerate(
+            [(0x00, 3, 7003), (0x10, 3, 6), (0x0B, 3, 8000), (0x18, 1, 1)]
+        )
+    ]
+    assert inventory_module._discover_inventory_tail_layout(groups[:-1]) == (-1, stride - 2)
+    assembly = inventory_module._assemble_inventory(
+        (groups[0][2],),
+        tuple(frame for frame, _, _, _ in groups),
+        tuple(event for _, records, _, _ in groups for event in records),
+        generations_observed=1,
+    )
+    summary = assembly.summary
+    assert summary.unclassified_records == 0
+    assert summary.container(0x00).occupied_stacks == 3
+    assert summary.container(0x10).occupied_stacks == 1
+    assert summary.container(0x0B).occupied_stacks == 3
+    assert summary.currency_balance_records == 3
+    assert summary.currency("Silver").inventory_slot == 2
+
+
+@pytest.mark.parametrize("failure", ["ambiguous", "duplicate", "unknown"])
+def test_inventory_prefix_slot_layout_rejects_unproven_metadata(failure):
+    groups = [
+        _synthetic_inventory_tail_group(
+            sequence=100 + index,
+            stride=223,
+            slot_relative=-1,
+            container_relative=221,
+            container_code=code,
+            trailing_trim=1,
+            decoy_container_relative=220 if failure == "ambiguous" else None,
+        )
+        for index, code in enumerate((0x00, 0xFE if failure == "unknown" else 0x0B))
+    ]
+    if failure == "duplicate":
+        frame, records, spec, stride = groups[0]
+        message = bytearray(frame.message)
+        message[records[1].record_offset - 1] = message[records[0].record_offset - 1]
+        groups[0] = (replace(frame, message=bytes(message)), records, spec, stride)
+    assert inventory_module._discover_inventory_tail_layout(groups) is None
 
 
 def test_inventory_tail_layout_is_discovered_for_prior_observed_geometry():

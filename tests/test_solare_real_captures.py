@@ -266,7 +266,7 @@ def test_complete_private_capture_generation(case: _CompleteCapture) -> None:
     assert snapshot.players[0].global_rank == 1
     assert snapshot.players[-1].global_rank == case.max_rank
     class_capabilities = frozenset(
-        {"rankings", "elo", "performance", "raw_extensions"}
+        {"rankings", "elo", "performance", "raw_extensions", "equipment"}
     )
     overall_capabilities = class_capabilities | {"aggregate_performance"}
     assert snapshot.class_table_capabilities == class_capabilities
@@ -547,7 +547,7 @@ def test_raw_retention_is_opt_in_without_changing_snapshot_semantics(
         entry.to_dict() for entry in retained.overall_top_100
     )
     ordinary_class_capabilities = frozenset(
-        {"rankings", "elo", "performance"}
+        {"rankings", "elo", "performance", "equipment"}
     )
     ordinary_overall_capabilities = ordinary_class_capabilities | {
         "aggregate_performance"
@@ -757,3 +757,45 @@ def test_private_non_complete_capture_never_exposes_snapshot(
     assert result.evidence.health.capture_is_clean is (
         case.tcp_gap_resets == 0
     )
+
+
+@pytest.mark.parametrize("retain_raw", (False, True))
+def test_agent_roster_capture_learns_elo_and_zero_draw_performance(retain_raw: bool) -> None:
+    path = optional_fixture_path("solare--leaderboard-agent--a0658f34ed")
+    if not path.is_file():
+        pytest.skip("private Agent Solare capture is not installed")
+    result = replay_solare(path, retain_raw_extensions=retain_raw)
+    assert result.complete
+    assert result.evidence.health.capture_is_clean
+    assert result.evidence.exact_cross_check == 100
+    snapshot = result.snapshot
+    assert snapshot is not None
+    assert len(snapshot.players) == 640
+    assert len(snapshot.overall_top_100) == 100
+    assert len(snapshot.class_leaderboard(35)) == 20
+    assert snapshot.class_table_capabilities == frozenset({"rankings", "elo", "performance", "equipment"})
+    assert snapshot.overall_capabilities == frozenset({"rankings", "elo", "performance", "equipment"})
+    rich = {p.name: p for p in snapshot.players}
+    assert all(entry.elo == rich[entry.name].elo for entry in snapshot.overall_top_100)
+    assert all(p.elo is not None and p.classes_played for p in snapshot.players)
+    for row in (*snapshot.players, *snapshot.overall_top_100):
+        for slot in row.classes_played:
+            assert slot.equipment is not None and len(slot.equipment) == 14
+            assert slot.draws == 0
+            assert slot.matches == slot.wins + slot.losses
+            assert slot.gear_loadout_raw is None
+    for entry in snapshot.overall_top_100:
+        assert entry.classes_played == rich[entry.name].classes_played
+    assert all(entry.total_wins is None for entry in snapshot.overall_top_100)
+    assert sum(len(p.classes_played) for p in snapshot.players) == 722
+    assert sum(len(p.classes_played) for p in snapshot.overall_top_100) == 114
+    equipment = snapshot.players[0].classes_played[0].equipment
+    assert equipment is not None
+    by_slot = {item.slot_code: item for item in equipment}
+    assert by_slot[0].item_id == 741317
+    assert by_slot[0].crystal_ids == (15819, 15819)
+    assert by_slot[3].item_id == 740603
+    assert by_slot[3].crystal_ids == (15252, 15252)
+    assert by_slot[8].item_id == by_slot[9].item_id == 741617
+    assert by_slot[10].item_id == by_slot[11].item_id == 931610
+    assert sum(all(item.crystal_ids) for item in equipment) == 7

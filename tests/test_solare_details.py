@@ -206,19 +206,20 @@ def _synthetic_snapshot(
     layout: _Layout,
     *,
     rich_ranks: tuple[int, ...] | None = None,
+    include_agent: bool = False,
 ) -> _SyntheticSnapshot:
-    class_codes = tuple(sorted(CLASS_NAMES))
-    assert len(class_codes) == 31
+    class_codes = tuple(code for code in sorted(CLASS_NAMES) if include_agent or code != 35)
+    record_count = len(class_codes) * 20
     if rich_ranks is None:
-        rich_ranks = tuple(range(1, 621))
-    assert len(rich_ranks) == 620
+        rich_ranks = tuple(range(1, record_count + 1))
+    assert len(rich_ranks) == record_count
     ranks = rich_ranks
     names = tuple(f"TestPlayer{rank:04d}" for rank in ranks)
     primary_codes = tuple(code for code in class_codes for _ in range(20))
     rich_opcode = 0x7070  # Deliberately unrelated to every observed opcode.
 
     rich_frames: list[BDOFrame] = []
-    for frame_index in range(310):
+    for frame_index in range(record_count // 2):
         message = bytearray(layout.frame_length)
         for in_frame_index, base in enumerate((0, layout.stride)):
             ordinal = frame_index * 2 + in_frame_index
@@ -290,14 +291,14 @@ def _synthetic_snapshot(
         flow=_FLOW,
         opcode=0x1234,  # Decoder selection must not consult this value.
         frame_length=layout.frame_length,
-        frame_count=310,
+        frame_count=record_count // 2,
         record_stride=layout.stride,
         name_offset=layout.name,
         rank_offset=layout.rank,
         names=names,
         ranks=ranks,
         first_stream_offset=0,
-        last_stream_end=310 * layout.frame_length,
+        last_stream_end=(record_count // 2) * layout.frame_length,
         class_offset=layout.player_class,
         class_codes=primary_codes,
         class_counts=tuple((code, 20) for code in class_codes),
@@ -417,9 +418,9 @@ def _synthetic_snapshot(
         _put_header(message, overall_opcode)
         overall_frames.append(
             _frame(
-                310 + frame_index,
+                (record_count // 2) + frame_index,
                 message,
-                (310 + frame_index) * layout.overall_length,
+                ((record_count // 2) + frame_index) * layout.overall_length,
             )
         )
 
@@ -1030,3 +1031,13 @@ def test_overall_detail_layout_fails_closed_for_unknown_geometry() -> None:
     )
 
     assert decode_solare_overall_details(synthetic.overall_frames, unknown) is None
+
+
+def test_registered_geometry_accepts_agent_roster() -> None:
+    fixture = _synthetic_snapshot(_REPRESENTATIVE_LAYOUT, include_agent=True)
+    decoded = decode_solare_details(fixture.rich_frames, fixture.rich)
+    assert decoded is not None
+    assert len(decoded.players) == 640
+    agents = [p for p in decoded.players if p.primary_class.code == 35]
+    assert len(agents) == 20
+    assert all(p.primary_class.name == "Agent" and p.elo is not None for p in agents)

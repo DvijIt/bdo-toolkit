@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Optional
 
 from bdo_toolkit._protocol import BDOFrame
 
 from ._constants import class_name
-from ._detail_learning import learn_unknown_solare_details
+from ._detail_learning import decode_equipment_table, learn_unknown_solare_details
 from ._details import (
     _overall_layout_for,
     _rich_layout_for,
@@ -292,7 +293,7 @@ def build_solare_result(
 ) -> SolareCaptureResult:
     """Classify collected generic frames and construct a fail-closed result.
 
-    A snapshot is returned only after the rich 620-player class table and an
+    A snapshot is returned only after the complete class-balanced table and an
     independent complete overall top 100 agree on every shared rank and name.
     Deeper detail decoding is optional: an unfamiliar geometry may use bounded
     ephemeral inference after confirmation, while every unsupported or
@@ -413,6 +414,23 @@ def build_solare_result(
         )
         overall_detail_layout_id = overall_details.layout_id
         overall_capabilities.update(overall_details.capabilities)
+
+    rich_layout = _rich_layout_for(rich)
+    equipment = decode_equipment_table(
+        rich_frames, rich, players,
+        gear_offset=rich_layout.gear_offset if rich_layout is not None else None,
+    )
+    if equipment is not None:
+        players = tuple(replace(p, classes_played=equipment[p.name]) for p in players)
+        class_table_capabilities.add("equipment")
+    overall_layout = _overall_layout_for(overall)
+    equipment = decode_equipment_table(
+        overall_frames, overall, overall_entries,
+        gear_offset=overall_layout.gear_offset if overall_layout is not None else None,
+    )
+    if equipment is not None:
+        overall_entries = tuple(replace(p, classes_played=equipment[p.name]) for p in overall_entries)
+        overall_capabilities.add("equipment")
 
     evidence = _evidence(
         discovery,

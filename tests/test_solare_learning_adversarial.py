@@ -8,7 +8,11 @@ groups remain publishable.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
 from typing import cast
 
 import bdo_toolkit.solare._detail_learning as learning
@@ -565,3 +569,239 @@ def test_elo_survives_when_performance_is_withheld() -> None:
     assert decoded.capabilities == frozenset({"rankings", "elo"})
     assert all(player.elo is not None for player in decoded.players)
     assert all(not player.classes_played for player in decoded.players)
+
+
+def test_all_zero_draws_do_not_establish_a_unique_outcome_layout() -> None:
+    records, performance = _performance_rows()
+    rows = []
+    for source in records.rows:
+        row = bytearray(source)
+        for slot in range(3):
+            draws = learning._u32le(row, _DRAWS_OFFSET + slot * 4)
+            losses = learning._u32le(row, _LOSSES_OFFSET + slot * 4)
+            start = _LOSSES_OFFSET + slot * 4
+            row[start:start + 4] = (losses + draws).to_bytes(4, "little")
+        row[_DRAWS_OFFSET:_DRAWS_OFFSET + 12] = bytes(12)
+        rows.append(bytes(row))
+    assert learning._balanced_counter_solution(rows, performance.occupancies) is None
+
+
+def _zero_draw_tail() -> tuple[learning._RecordTable, tuple[int, ...]]:
+    # Independent synthetic geometry, not copied from a captured layout.
+    rows = []
+    occupancies = (1,) * 8 + (2,) * 8 + (3,) * 8
+    primary = (0, 1, 2, 4, 5, 6)
+    for ordinal, occupied in enumerate(occupancies):
+        row = bytearray(7879)
+        row[12:15] = bytes((primary[ordinal % 6], 7 if occupied > 1 else 101,
+                            8 if occupied > 2 else 101))
+        row[358:361] = bytes((1, 2 if occupied > 1 else 3,
+                              1 if occupied > 2 else 3))
+        row[51:55] = (2000 - ordinal).to_bytes(4, "little")
+        for slot in range(occupied):
+            matches = (ordinal % 5 + 1) if ordinal < 8 else 12 + ordinal + slot
+            wins = matches if ordinal % 4 == 1 else max(matches - 1, 0)
+            for offset, value in ((15, matches), (27, wins), (39, matches - wins)):
+                start = offset + slot * 4
+                row[start:start + 4] = value.to_bytes(4, "little")
+            history = _history_text(matches, wins)
+            start = 55 + slot * 101
+            row[start:start + len(history)] = history
+            addons = b",".join([b"1"] * 12)
+            start = 361 + slot * 501
+            row[start:start + len(addons)] = addons
+            gear = b",".join([b"10"] * 126)
+            start = 1864 + slot * 2001
+            row[start:start + len(gear)] = gear
+        rows.append(bytes(row))
+    codes = tuple(row[12] for row in rows)
+    table = _table(tuple(rows), role="rich", class_codes=codes)
+    table.family.class_offset = 12  # type: ignore[misc]
+    return table, occupancies
+
+
+def test_zero_draws_require_unique_surrounding_field_boundaries() -> None:
+    records, occupancies = _zero_draw_tail()
+    performance = learning._learn_performance_offsets(records, 12, occupancies)
+    assert performance is not None
+    assert (performance.matches_offset, performance.wins_offset,
+            performance.draws_offset, performance.losses_offset) == (15, 27, 7867, 39)
+
+
+@pytest.mark.parametrize("damage", ("extra_gap", "nonzero_draw", "broken_gear", "broken_addons", "broken_history", "unbalanced"))
+def test_zero_draw_boundary_proof_rejects_missing_evidence(damage: str) -> None:
+    records, occupancies = _zero_draw_tail()
+    rows = list(records.rows)
+    if damage == "extra_gap":
+        rows = [row + bytes(12) for row in rows]
+        records.family.frame_length += 12  # type: ignore[misc]
+    else:
+        row = bytearray(rows[0])
+        offset = {"nonzero_draw": 7867, "broken_gear": 1864, "broken_addons": 361, "broken_history": 55, "unbalanced": 27}[damage]
+        row[offset] = 255
+        rows[0] = bytes(row)
+    changed = replace(records, rows=tuple(rows))
+    assert learning._learn_performance_offsets(changed, 12, occupancies) is None
+
+
+@pytest.mark.parametrize("empty_rows, supported", ((1, True), (2, True)))
+def test_zero_draw_anchor_accepts_blank_addons_without_authorizing_raw(
+    empty_rows: int, supported: bool,
+) -> None:
+    records, occupancies = _zero_draw_tail()
+    rows = list(records.rows)
+    for ordinal in range(1, empty_rows + 1):
+        row = bytearray(rows[ordinal])
+        row[361:862] = bytes(501)
+        rows[ordinal] = bytes(row)
+    changed = replace(records, rows=tuple(rows))
+    performance = learning._learn_performance_offsets(changed, 12, occupancies)
+    assert (performance is not None) is supported
+    if performance is not None:
+        assert learning._learn_raw_offsets(changed, performance) is None
+
+
+@pytest.mark.parametrize("empty_slots", ((0,), (1,), (2,), (0, 1, 2)))
+def test_empty_addons_in_any_player_class_slot(empty_slots):
+    records, occupancies = _zero_draw_tail()
+    rows = []
+    for ordinal, source in enumerate(records.rows):
+        row = bytearray(source)
+        # Include a fully blank first player, and more than five percent of
+        # tertiary loadouts; retain text witnesses in other records.
+        if ordinal % 2 == 0:
+            for slot in empty_slots:
+                row[361 + slot * 501:361 + (slot + 1) * 501] = bytes(501)
+        rows.append(bytes(row))
+    changed = replace(records, rows=tuple(rows))
+    performance = learning._learn_performance_offsets(changed, 12, occupancies)
+    assert performance is not None
+    assert performance.draws_offset == 7867
+
+
+def test_entire_table_without_addon_text_cannot_establish_a_boundary():
+    records, occupancies = _zero_draw_tail()
+    rows = tuple(row[:361] + bytes(1503) + row[1864:] for row in records.rows)
+    assert learning._learn_performance_offsets(replace(records, rows=rows), 12, occupancies) is None
+
+
+@pytest.mark.parametrize("slot", (0, 1, 2))
+@pytest.mark.parametrize("count", (2, 4, 6, 8, 10))
+def test_partial_addon_pairs_anchor_without_population_threshold(slot, count):
+    records, occupancies = _zero_draw_tail()
+    rows = list(records.rows)
+    for ordinal in range(16, 24):
+        row = bytearray(rows[ordinal])
+        start = 361 + slot * 501
+        text = b",".join([b"1572"] * count)
+        row[start:start + 501] = text + bytes(501 - len(text))
+        rows[ordinal] = bytes(row)
+    performance = learning._learn_performance_offsets(
+        replace(records, rows=tuple(rows)), 12, occupancies)
+    assert performance is not None
+    assert performance.draws_offset == 7867
+
+
+@pytest.mark.parametrize("text", (b"1,2,3", b",".join([b"1"] * 14),
+                                 b"1,x", b"1,2\x00junk", b"1,2,"))
+def test_malformed_partial_addon_rejected_even_in_one_tertiary_slot(text):
+    records, occupancies = _zero_draw_tail()
+    row = bytearray(records.rows[-1])
+    start = 361 + 2 * 501
+    row[start:start + 501] = text + bytes(501 - len(text))
+    changed = replace(records, rows=records.rows[:-1] + (bytes(row),))
+    assert learning._learn_performance_offsets(changed, 12, occupancies) is None
+
+
+def test_blank_addon_requires_entire_slot_to_be_zero():
+    records, occupancies = _zero_draw_tail()
+    row = bytearray(records.rows[0])
+    row[361:862] = bytes(501)
+    row[861] = 255
+    changed = replace(records, rows=(bytes(row),) + records.rows[1:])
+    assert learning._learn_performance_offsets(changed, 12, occupancies) is None
+
+
+@pytest.mark.parametrize("damage", (None, "stats", "rank", "class", "few_shared", "no_local_history"))
+def test_small_local_history_requires_independent_companion_agreement(damage):
+    records, occupied = _zero_draw_tail()
+    extra = []
+    for i, original in enumerate(records.rows[-8:]):
+        row = bytearray(original)
+        row[51:55] = (1976 - i).to_bytes(4, "little")
+        extra.append(bytes(row))
+    rows = records.rows + tuple(extra)
+    source = _table(rows, role="rich", class_codes=tuple(row[12] for row in rows))
+    source.family.class_offset = 12
+    source_occupied = occupied + occupied[-8:]
+    known = learning._learn_performance_offsets(source, 12, source_occupied)
+    assert known is not None
+    target = replace(source, rows=source.rows[5:], names=source.names[5:], ranks=source.ranks[5:])
+    target_occupied = source_occupied[5:]
+    # Isolate orientation policy: counter geometry has separate adversarial
+    # coverage and remains a prerequisite in production.
+    def infer(**kwargs):
+        with patch.object(learning, "_balanced_counter_solution", return_value=(15, (27, 39, 7867))), patch.object(learning, "_orient_outcomes", return_value=None):
+            return learning._learn_performance_offsets(target, 12, target_occupied, **kwargs)
+    assert infer() is None
+    if damage == "stats":
+        row = bytearray(target.rows[-1])
+        row[27:31], row[39:43] = row[39:43], row[27:31]
+        target = replace(target, rows=target.rows[:-1] + (bytes(row),))
+    elif damage == "rank":
+        target = replace(target, ranks=target.ranks[:-1] + (999,))
+    elif damage == "class":
+        row = bytearray(target.rows[-1]); row[12] = 30
+        target = replace(target, rows=target.rows[:-1] + (bytes(row),))
+    elif damage == "few_shared":
+        target = replace(target, names=tuple("Other" + n if i > 10 else n for i, n in enumerate(target.names)))
+    elif damage == "no_local_history":
+        target = replace(target, rows=target.rows[3:], names=target.names[3:], ranks=target.ranks[3:])
+        target_occupied = target_occupied[3:]
+    inferred = infer(companion=(source, known))
+    assert (inferred is not None) is (damage in (None, "no_local_history"))
+
+
+@pytest.mark.parametrize("case", ("verified", "ambiguous", "contradictory", "insufficient"))
+def test_outcome_orientation_without_any_low_match_players(case):
+    fixed = []
+    for i in range(4 if case == "insufficient" else 12):
+        row = bytearray(200)
+        matches = 100 + i
+        wins = 60 if case == "ambiguous" else matches - 1
+        for offset, value in ((0, matches), (12, wins), (24, 0), (36, matches - wins)):
+            row[offset:offset + 4] = value.to_bytes(4, "little")
+        text = b"1,0,1,0,1,0,1,0,1,0" if case == "contradictory" and i == 0 else b"1,1,1,1,1,1,1,1,1,1"
+        row[50:50 + len(text)] = text
+        fixed.append(bytes(row))
+    actual = learning._orient_outcomes(fixed, (1,) * len(fixed), 0, (12, 24, 36), 50)
+    assert actual == ((12, 24, 36) if case == "verified" else None)
+
+
+def test_full_performance_discovery_when_every_player_is_experienced():
+    records, occupancies = _zero_draw_tail()
+    rows = []
+    for ordinal, (source, occupied) in enumerate(zip(records.rows, occupancies)):
+        row = bytearray(source)
+        for slot in range(occupied):
+            matches = 30 + ordinal + slot
+            wins = matches - 1
+            for offset, value in ((15, matches), (27, wins), (39, 1)):
+                start = offset + slot * 4
+                row[start:start + 4] = value.to_bytes(4, "little")
+            start = 55 + slot * 101
+            row[start:start + 101] = bytes(101)
+            history = _history_text(matches, wins)
+            row[start:start + len(history)] = history
+        rows.append(bytes(row))
+    changed = replace(records, rows=tuple(rows))
+    candidates = learning._matches_candidates(changed.rows, occupancies)
+    assert 2 < len(candidates) <= learning._MAX_MATCH_CANDIDATES
+    performance = learning._learn_performance_offsets(changed, 12, occupancies)
+    assert performance is not None
+    assert (performance.matches_offset, performance.wins_offset, performance.draws_offset, performance.losses_offset) == (15, 27, 7867, 39)
+
+
+def test_match_search_still_rejects_candidate_overflow():
+    row = b"".join(value.to_bytes(4, "little") + bytes(8) for value in range(1, 20))
+    assert learning._matches_candidates((row,), (1,)) == ()

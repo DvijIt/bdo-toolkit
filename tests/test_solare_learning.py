@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -52,7 +52,7 @@ _JULY_30_UNKNOWN_LAYOUT_CAPTURE = (
 )
 
 _LEARNED_CAPABILITIES = frozenset(
-    {"rankings", "elo", "performance", "raw_extensions"}
+    {"rankings", "elo", "performance", "raw_extensions", "equipment"}
 )
 _LEARNED_OVERALL_CAPABILITIES = (
     _LEARNED_CAPABILITIES | {"aggregate_performance"}
@@ -374,3 +374,102 @@ def test_mixed_registered_and_unknown_tables_keep_independent_details(
         item.elo == rich_by_name[item.name].elo
         for item in shared
     )
+
+
+@pytest.mark.parametrize(
+    "capture_id, recoverable",
+    (
+        ("solare--leaderboard-complete--1065cbd89c", {"rich", "overall"}),
+        ("solare--leaderboard-complete-retry--8bfa6979ab", {"overall"}),
+        ("solare--leaderboard-complete-post-patch--92d835cbe9", {"rich"}),
+        ("solare--leaderboard-complete-unregistered--dfeb623bda", {"rich", "overall"}),
+        ("solare--leaderboard-complete-live-clock-regression--45c54a0567", {"rich"}),
+        ("solare--leaderboard-complete-post-patch-live-timeout-regression--341a4f1b87", set()),
+    ),
+)
+def test_historical_zero_draw_counterfactual_recovers_only_proven_boundaries(
+    capture_id: str, recoverable: set[str],
+) -> None:
+    path = optional_fixture_path(capture_id)
+    if not path.is_file():
+        pytest.skip("private Solare capture is not installed")
+    original = learning_module._learn_performance_offsets
+    visited: set[str] = set()
+
+    def inspect(records, class_offset, occupancies):
+        proven = original(records, class_offset, occupancies)
+        assert proven is not None
+        rows = []
+        for source in records.rows:
+            row = bytearray(source)
+            for slot in range(3):
+                total = (
+                    learning_module._u32le(row, proven.wins_offset + slot * 4)
+                    + learning_module._u32le(row, proven.losses_offset + slot * 4)
+                )
+                start = proven.matches_offset + slot * 4
+                row[start:start + 4] = total.to_bytes(4, "little")
+            row[proven.draws_offset:proven.draws_offset + 12] = bytes(12)
+            rows.append(bytes(row))
+        changed = replace(records, rows=tuple(rows))
+        learned = original(changed, class_offset, occupancies)
+        role = records.family.role
+        visited.add(role)
+        assert learned == (proven if role in recoverable else None)
+        return proven
+
+    with (
+        patch.object(details_module, "_RICH_DETAIL_LAYOUTS", ()),
+        patch.object(details_module, "_OVERALL_DETAIL_LAYOUTS", ()),
+        patch.object(learning_module, "_learn_performance_offsets", inspect),
+    ):
+        assert replay_solare(path).complete
+    assert visited == {"rich", "overall"}
+
+
+_NO_LOW_MATCH_CAPTURES = _COMPLETE_CAPTURE_PATHS + (
+    _JULY_30_UNKNOWN_LAYOUT_CAPTURE,
+    optional_fixture_path("solare--leaderboard-complete-live-clock-regression--45c54a0567"),
+    optional_fixture_path("solare--leaderboard-complete-post-patch-live-timeout-regression--341a4f1b87"),
+    optional_fixture_path("solare--leaderboard-agent--a0658f34ed"),
+)
+
+
+@pytest.mark.parametrize("path", _NO_LOW_MATCH_CAPTURES, ids=lambda path: path.stem)
+def test_historical_rediscovery_without_low_match_history(path):
+    if not path.is_file():
+        pytest.skip("private Solare capture is not installed")
+    baseline = replay_solare(path)
+    original = learning_module._history_outcome_candidates
+    excluded = 0
+    def experienced_only(rows, occupancies, matches_offset, *args, **kwargs):
+        nonlocal excluded
+        kept = [(row, n) for row, n in zip(rows, occupancies)
+                if all(learning_module._u32le(row, matches_offset + slot * 4) > 5 for slot in range(n))]
+        excluded += len(rows) - len(kept)
+        return original(tuple(row for row, n in kept), tuple(n for row, n in kept), matches_offset, *args, **kwargs)
+    with patch.object(details_module, "_RICH_DETAIL_LAYOUTS", ()), \
+         patch.object(details_module, "_OVERALL_DETAIL_LAYOUTS", ()), \
+         patch.object(learning_module, "_history_outcome_candidates", experienced_only):
+        result = replay_solare(path)
+    assert result.complete and result.evidence.health.capture_is_clean
+    assert excluded > 0
+    for before, after, caps in (
+        (baseline.snapshot.players, result.snapshot.players, result.snapshot.class_table_capabilities),
+        (baseline.snapshot.overall_top_100, result.snapshot.overall_top_100, result.snapshot.overall_capabilities),
+    ):
+        if path.name.startswith("leaderboard-agent--"):
+            # This season-start recording is genuinely ambiguous without its
+            # short histories. Preserve rankings, never invent outcome labels.
+            assert caps == frozenset({"rankings", "elo"})
+            assert [(p.name, p.global_rank) for p in after] == [(p.name, p.global_rank) for p in before]
+            assert all(not p.classes_played for p in after)
+            continue
+        assert "performance" in caps
+        reference = {p.name: p for p in before}
+        for player in after:
+            expected = reference[player.name]
+            assert player.global_rank == expected.global_rank
+            assert len(player.classes_played) == len(expected.classes_played)
+            for a, b in zip(player.classes_played, expected.classes_played):
+                assert (a.slot, a.player_class.code, a.matches, a.wins, a.draws, a.losses) == (b.slot, b.player_class.code, b.matches, b.wins, b.draws, b.losses)

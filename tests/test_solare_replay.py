@@ -80,11 +80,13 @@ def _complete_frames(
     name_prefix: str = "Player",
     rich_ranks: tuple[int, ...] | None = None,
     overall_name_overrides: dict[int, str] | None = None,
+    include_agent: bool = False,
 ) -> tuple[BDOFrame, ...]:
-    classes = tuple(CLASS_NAMES)
+    classes = tuple(code for code in CLASS_NAMES if include_agent or code != 35)
+    record_count = len(classes) * 20
     if rich_ranks is None:
-        rich_ranks = tuple(range(1, 621))
-    assert len(rich_ranks) == 620
+        rich_ranks = tuple(range(1, record_count + 1))
+    assert len(rich_ranks) == record_count
     rows = tuple(
         (f"{name_prefix}{rank:04d}", rank, classes[ordinal // 20])
         for ordinal, rank in enumerate(rich_ranks)
@@ -97,7 +99,7 @@ def _complete_frames(
     frames: list[BDOFrame] = []
     stream_sequence = 100_000
 
-    for index in range(310):
+    for index in range(record_count // 2):
         message = _message(
             length=8_410,
             opcode=rich_opcode,
@@ -1854,3 +1856,48 @@ def test_live_tracker_clears_analysis_cache_on_retention_eviction() -> None:
 
     assert tracker.history_rolled_over
     assert tracker._analysis_cache.entry_count == 0
+
+
+@pytest.mark.parametrize("include_agent", (False, True))
+def test_reviewed_rosters_work_in_replay_and_live(include_agent: bool) -> None:
+    frames = _complete_frames(include_agent=include_agent)
+    expected_count = 640 if include_agent else 620
+    result = build_solare_result(frames, _health(frames))
+    assert result.snapshot is not None
+    assert len(result.snapshot.players) == expected_count
+    assert len(result.snapshot.class_leaderboard(35)) == (20 if include_agent else 0)
+    if include_agent:
+        assert result.snapshot.class_leaderboard(35)[0].primary_class.name == "Agent"
+    tracker = LiveSolareDiscoveryTracker(lambda _update: None)
+    for frame in frames:
+        tracker.observe(frame)
+    tracker.refresh()
+    assert tracker.complete
+    assert tracker.result.rich is not None
+    assert tracker.result.rich.record_count == expected_count
+
+
+def test_unreviewed_class_replacing_agent_does_not_complete() -> None:
+    frames = list(_complete_frames(include_agent=True))
+    for index in range(310, 320):
+        data = bytearray(frames[index].message)
+        data[104] = data[4200 + 104] = 36
+        frames[index] = replace(frames[index], message=bytes(data))
+    # Retain 20 rows of each historical class, plus an unknown class. The
+    # shorter historical window must not hide the unexpected continuation.
+    result = build_solare_result(frames, _health(frames))
+    assert result.snapshot is None
+
+
+def test_agent_continuation_does_not_latch_historical_prefix_live() -> None:
+    frames = _complete_frames(include_agent=True)
+    tracker = LiveSolareDiscoveryTracker(lambda _update: None)
+    for frame in frames[320:] + frames[:310]:
+        tracker.observe(frame)
+    assert not tracker.complete
+    for frame in frames[310:320]:
+        tracker.observe(frame)
+    tracker.refresh()
+    assert tracker.complete
+    assert tracker.result.rich is not None
+    assert tracker.result.rich.record_count == 640
