@@ -147,21 +147,25 @@ class _NamePair:
     names: tuple[str, ...]
 
 
+def _is_player_identifier_codepoint(code: int) -> bool:
+    # Korean captures use precomposed Hangul syllables in the same UTF-16LE
+    # fields. Keep the accepted alphabet bounded rather than accepting arbitrary
+    # Unicode text from binary fields during structural discovery.
+    return code in PLAYER_NAME_BYTES or 0xAC00 <= code <= 0xD7A3
+
+
 def _read_player_identifier(data: bytes, offset: int, max_chars: int = 32) -> str:
     if offset < 0:
         return ""
-    raw = bytearray()
     for index in range(max_chars):
         position = offset + index * 2
         if position + 1 >= len(data):
             return ""
-        low = data[position]
-        high = data[position + 1]
-        if low == 0 and high == 0:
-            return raw.decode("ascii") if raw else ""
-        if high != 0 or low not in PLAYER_NAME_BYTES:
+        code = data[position] | data[position + 1] << 8
+        if code == 0:
+            return data[offset:position].decode("utf-16-le")
+        if not _is_player_identifier_codepoint(code):
             return ""
-        raw.append(low)
     return ""
 
 
@@ -172,8 +176,9 @@ def _identifier_starts_here(data: bytes, offset: int) -> bool:
         return False
     if (
         offset >= 2
-        and data[offset - 1] == 0
-        and data[offset - 2] in PLAYER_NAME_BYTES
+        and _is_player_identifier_codepoint(
+            data[offset - 2] | data[offset - 1] << 8
+        )
     ):
         return False
     return True

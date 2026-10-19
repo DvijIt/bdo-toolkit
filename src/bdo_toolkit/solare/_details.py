@@ -28,7 +28,10 @@ from ._constants import (
     SOLARE_RICH_RECORD_COUNTS,
     class_name,
 )
-from ._discovery import DiscoveredSolareFamily
+from ._discovery import (
+    DiscoveredSolareFamily,
+    _read_player_identifier as _read_name,
+)
 from ._validation import validate_retain_raw_extensions
 from .models import (
     SolareClass,
@@ -285,24 +288,6 @@ class SolareOverallDetailDecode:
 
 def _u32le(data: bytes, offset: int) -> int:
     return int.from_bytes(data[offset : offset + 4], "little")
-
-
-def _read_name(data: bytes, offset: int, max_chars: int = 32) -> str:
-    raw = bytearray()
-    for index in range(max_chars):
-        position = offset + index * 2
-        if position + 1 >= len(data):
-            return ""
-        low = data[position]
-        high = data[position + 1]
-        if low == 0 and high == 0:
-            return raw.decode("ascii") if raw else ""
-        if high != 0 or not (
-            48 <= low <= 57 or 65 <= low <= 90 or 97 <= low <= 122 or low in (45, 95)
-        ):
-            return ""
-        raw.append(low)
-    return ""
 
 
 def _read_u32_slots(data: bytes, base: int, offset: int) -> tuple[int, int, int]:

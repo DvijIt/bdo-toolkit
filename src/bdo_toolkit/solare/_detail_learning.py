@@ -909,7 +909,9 @@ def _raw_base_candidates(
                         break
                     if not any(block):
                         continue
-                    shape = _csv_integer_count(row, start)
+                    # The candidate fixes this block's boundary. A byte in the
+                    # preceding binary field must not extend its CSV text.
+                    shape = _csv_integer_count(block, 0)
                     if (shape is None or not 2 <= shape[0] <= value_count
                             or shape[0] % 2 or shape[1] > maximum_text_length
                             or any(block[shape[1]:])):

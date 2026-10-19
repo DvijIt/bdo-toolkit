@@ -713,6 +713,22 @@ def test_malformed_partial_addon_rejected_even_in_one_tertiary_slot(text):
     assert learning._learn_performance_offsets(changed, 12, occupancies) is None
 
 
+@pytest.mark.parametrize("preceding", (ord("0"), ord("5"), ord("9"), ord(",")))
+@pytest.mark.parametrize("count", (0, 2, 4, 6, 8, 10, 12))
+def test_addon_boundary_validation_ignores_preceding_binary_byte(preceding, count):
+    records, occupancies = _zero_draw_tail()
+    row = bytearray(records.rows[0])
+    row[360] = preceding
+    text = b",".join([b"1572"] * count)
+    row[361:862] = text + bytes(501 - len(text))
+    rows = (bytes(row),) + records.rows[1:]
+    assert learning._raw_base_candidates(
+        rows, occupancies, value_count=12, slot_size=501,
+        minimum_text_length=20, maximum_text_length=100,
+        allow_empty_slots=True,
+    ) == (361,)
+
+
 def test_blank_addon_requires_entire_slot_to_be_zero():
     records, occupancies = _zero_draw_tail()
     row = bytearray(records.rows[0])

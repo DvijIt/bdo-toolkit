@@ -207,6 +207,7 @@ def _synthetic_snapshot(
     *,
     rich_ranks: tuple[int, ...] | None = None,
     include_agent: bool = False,
+    name_prefix: str = "TestPlayer",
 ) -> _SyntheticSnapshot:
     class_codes = tuple(code for code in sorted(CLASS_NAMES) if include_agent or code != 35)
     record_count = len(class_codes) * 20
@@ -214,7 +215,7 @@ def _synthetic_snapshot(
         rich_ranks = tuple(range(1, record_count + 1))
     assert len(rich_ranks) == record_count
     ranks = rich_ranks
-    names = tuple(f"TestPlayer{rank:04d}" for rank in ranks)
+    names = tuple(f"{name_prefix}{rank:04d}" for rank in ranks)
     primary_codes = tuple(code for code in class_codes for _ in range(20))
     rich_opcode = 0x7070  # Deliberately unrelated to every observed opcode.
 
@@ -311,7 +312,7 @@ def _synthetic_snapshot(
         for in_frame_index, base in enumerate((0, layout.overall_stride)):
             ordinal = frame_index * 2 + in_frame_index
             overall_rank = ordinal + 1
-            name = f"TestPlayer{overall_rank:04d}"
+            name = f"{name_prefix}{overall_rank:04d}"
             encoded_name = name.encode("utf-16le") + b"\x00\x00"
             message[
                 base
@@ -433,12 +434,29 @@ def _synthetic_snapshot(
         record_stride=layout.overall_stride,
         name_offset=layout.overall_name,
         rank_offset=layout.overall_rank,
-        names=tuple(f"TestPlayer{rank:04d}" for rank in range(1, 101)),
+        names=tuple(f"{name_prefix}{rank:04d}" for rank in range(1, 101)),
         ranks=tuple(range(1, 101)),
         first_stream_offset=rich.last_stream_end,
         last_stream_end=rich.last_stream_end + 50 * layout.overall_length,
     )
     return _SyntheticSnapshot(tuple(rich_frames), rich, tuple(overall_frames), overall)
+
+
+@pytest.mark.parametrize("layout", _LAYOUTS, ids=lambda item: item.layout_id)
+def test_registered_details_preserve_korean_names_and_performance(layout: _Layout) -> None:
+    synthetic = _synthetic_snapshot(layout, name_prefix="\uac00\ub098")
+    rich = decode_solare_details(synthetic.rich_frames, synthetic.rich)
+    overall = decode_solare_overall_details(synthetic.overall_frames, synthetic.overall)
+    assert rich is not None
+    assert overall is not None
+    assert rich.players[0].name == "\uac00\ub0980001"
+    assert rich.players[-1].name == "\uac00\ub0980620"
+    assert rich.players[0].elo == 9999
+    assert rich.players[0].classes_played[0].matches == 101
+    assert overall.entries[0].name == "\uac00\ub0980001"
+    assert overall.entries[-1].name == "\uac00\ub0980100"
+    assert "performance" in overall.capabilities
+    assert overall.entries[0].classes_played[0].wins == 120
 
 
 @pytest.mark.parametrize("layout", _LAYOUTS, ids=lambda item: item.layout_id)

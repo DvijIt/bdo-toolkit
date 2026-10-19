@@ -311,6 +311,57 @@ def _assert_selected_snapshot(
     ) == (0x5555, 50, 4_210, 30, 120)
 
 
+def test_korean_and_mixed_names_confirm_both_leaderboards() -> None:
+    # Exercise suffix rejection for Hangul too: discovery must select the full
+    # name column, not the Latin/digit suffix of a mixed identifier.
+    frames = _complete_frames(name_prefix="\uac00\ub098_KR", include_agent=True)
+    result = build_solare_result(frames, _health(frames))
+    assert result.complete
+    assert result.snapshot is not None
+    assert len(result.snapshot.players) == 640
+    assert len(result.snapshot.overall_top_100) == 100
+    assert result.snapshot.players[0].name == "\uac00\ub098_KR0001"
+    assert result.snapshot.overall_top_100[0].name == "\uac00\ub098_KR0001"
+    assert result.evidence.exact_cross_check == 100
+    assert result.evidence.rich_layout is not None
+    assert result.evidence.rich_layout.name_offset == 20
+    assert result.evidence.overall_layout is not None
+    assert result.evidence.overall_layout.name_offset == 30
+
+
+@pytest.mark.parametrize("name", ("\uac00\ub098", "KR_\uac00\ub09819", "\uac00" * 31))
+def test_korean_name_reader_preserves_full_identifiers_and_rejects_suffixes(name):
+    from bdo_toolkit.solare._details import _read_name
+    from bdo_toolkit.solare._discovery import (
+        _identifier_starts_here, _read_player_identifier,
+    )
+
+    data = bytes(2) + name.encode("utf-16-le") + bytes(2)
+    assert _read_player_identifier(data, 2) == name
+    assert _read_name(data, 2) == name
+    assert _identifier_starts_here(data, 2)
+    assert not _identifier_starts_here(data, 4)
+
+
+@pytest.mark.parametrize("data", (
+    "\uac00".encode("utf-16-le"),                 # missing terminator
+    "\uac00".encode("utf-16-le") + b"\x00",      # truncated code unit
+    "\uac00".encode("utf-16-le") * 32 + bytes(2), # exceeds field bound
+    b"\x00\xd8\x00\x00",                     # unpaired surrogate
+    "\uac00 \ub098\x00".encode("utf-16-le"),   # spaces
+    "\uac00\u200b\ub098\x00".encode("utf-16-le"), # invisible separator
+    "\uac00\n\ub098\x00".encode("utf-16-le"), # control character
+    "\uac00!\x00".encode("utf-16-le"),         # punctuation
+    "\uac00\U0001f600\x00".encode("utf-16-le"), # outside reviewed alphabet
+))
+def test_malformed_or_unsupported_name_text_is_rejected(data):
+    from bdo_toolkit.solare._details import _read_name
+    from bdo_toolkit.solare._discovery import _read_player_identifier
+
+    assert _read_player_identifier(data, 0) == ""
+    assert _read_name(data, 0) == ""
+
+
 def test_complete_result_is_opcode_agnostic_and_falls_back_to_rankings() -> None:
     frames = _complete_frames(rich_opcode=0x7654, overall_opcode=0x3210)
 
