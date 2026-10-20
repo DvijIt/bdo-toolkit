@@ -6,6 +6,20 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.11 - 2026-10-20
+
+This patch restores structurally verified overall Solare records on qualifying
+zero-draw leaderboards.
+
+### Fixed
+
+- Discover structurally verified zero-draw Solare aggregate records. Independent
+  header boundaries and shared identity fields can now uniquely establish a
+  zero counter, recovering separate overall player win/draw/loss totals.
+  Arithmetic, orientation, and hidden-class activity checks remain required;
+  ambiguous fields stay unavailable. Per-class statistics remain separate,
+  allowing players with additional classes to expose their complete overall record.
+
 ## 1.0.10 - 2026-10-20
 
 This release supports Korean Solare names and improves addon inference and
