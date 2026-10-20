@@ -774,7 +774,7 @@ def test_agent_roster_capture_learns_elo_and_zero_draw_performance(retain_raw: b
     assert len(snapshot.overall_top_100) == 100
     assert len(snapshot.class_leaderboard(35)) == 20
     assert snapshot.class_table_capabilities == frozenset({"rankings", "elo", "performance", "equipment"})
-    assert snapshot.overall_capabilities == frozenset({"rankings", "elo", "performance", "equipment"})
+    assert snapshot.overall_capabilities == frozenset({"rankings", "elo", "performance", "equipment", "aggregate_performance"})
     rich = {p.name: p for p in snapshot.players}
     assert all(entry.elo == rich[entry.name].elo for entry in snapshot.overall_top_100)
     assert all(p.elo is not None and p.classes_played for p in snapshot.players)
@@ -786,7 +786,10 @@ def test_agent_roster_capture_learns_elo_and_zero_draw_performance(retain_raw: b
             assert slot.gear_loadout_raw is None
     for entry in snapshot.overall_top_100:
         assert entry.classes_played == rich[entry.name].classes_played
-    assert all(entry.total_wins is None for entry in snapshot.overall_top_100)
+    assert all(entry.total_wins is not None and entry.total_draws == 0
+               and entry.total_losses is not None for entry in snapshot.overall_top_100)
+    assert any(entry.total_matches > sum(c.matches for c in entry.classes_played)
+               for entry in snapshot.overall_top_100)
     assert sum(len(p.classes_played) for p in snapshot.players) == 722
     assert sum(len(p.classes_played) for p in snapshot.overall_top_100) == 114
     equipment = snapshot.players[0].classes_played[0].equipment

@@ -1015,9 +1015,90 @@ def _ranges_overlap(left: int, right: int, size: int = 4) -> bool:
     return left < right + size and right < left + size
 
 
+def _aggregate_zero_offsets(
+    records: _RecordTable,
+    performance: _PerformanceOffsets,
+    companion: Optional[_RecordTable],
+) -> tuple[int, ...]:
+    """Prove zero counters in four-byte gaps between independent header fields.
+
+    Historical headers carry a 62-byte name, a 101-byte recent-history block,
+    and an eight-byte identity shared with the class response. Identity matches
+    must be unique across both headers, not guessed from a small numeric value.
+    No absolute era-specific offsets or arbitrary runs of zeroes are used.
+    """
+    if companion is None or companion.family.class_offset is None:
+        return ()
+    elos = _elo_candidates(records)
+    rich_elos = _elo_candidates(companion)
+    if len(elos) != 1 or len(rich_elos) != 1:
+        return ()
+    boundary = performance.class_offset
+    rich_boundary = companion.family.class_offset
+    if max(boundary, rich_boundary) > 512:
+        return ()
+    fields = [(records.family.name_offset, 62),
+              (records.family.rank_offset, 4), (elos[0], 4)]
+    rich_fields = [(companion.family.name_offset, 62),
+                   (companion.family.rank_offset, 4), (rich_elos[0], 4)]
+
+    def free(start: int, size: int, blocks: Sequence[tuple[int, int]]) -> bool:
+        return all(start + size <= base or base + width <= start
+                   for base, width in blocks)
+
+    # Header history is distinct from the three per-class history blocks.
+    histories = []
+    for offset in range(5, boundary - _HISTORY_SLOT_SIZE + 1):
+        if not free(offset, _HISTORY_SLOT_SIZE, fields):
+            continue
+        valid = True
+        for row, occupied in zip(records.rows, performance.occupancies):
+            decoded = _decode_history_region(row[offset:offset + _HISTORY_SLOT_SIZE])
+            matches = sum(_u32le(row, performance.matches_offset + slot * 4)
+                          for slot in range(occupied))
+            if decoded is None or not decoded[0] or len(decoded[1]) != 2 * min(matches, 5):
+                valid = False
+                break
+        if valid:
+            histories.append(offset)
+    if len(histories) != 1:
+        return ()
+    fields.append((histories[0], _HISTORY_SLOT_SIZE))
+    lookup = dict(zip(companion.names, companion.rows))
+    pairs = [(row, lookup[name]) for name, row in zip(records.names, records.rows)
+             if name in lookup]
+    if len(pairs) < 20:
+        return ()
+    identities = []
+    for offset in range(5, boundary - 7):
+        if not free(offset, 8, fields):
+            continue
+        values = tuple(row[offset:offset + 8] for row, _ in pairs)
+        all_values = tuple(row[offset:offset + 8] for row in records.rows)
+        if len(set(all_values)) != len(all_values) or any(not any(v) for v in all_values):
+            continue
+        for other in range(5, rich_boundary - 7):
+            if free(other, 8, rich_fields) and all(
+                value == row[other:other + 8] for value, (_, row) in zip(values, pairs)
+            ):
+                identities.append((offset, other))
+    proofs = set()
+    for identity, other in identities:
+        ordered = sorted(fields + [(identity, 8)])
+        for (start, size), (end, _) in zip(ordered, ordered[1:]):
+            if (end - start - size == 4
+                    and all(not any(row[start + size:end]) for row in records.rows)):
+                proofs.add((identity, other, start + size))
+    # Shifted identity aliases are possible when high bytes are zero. Only a
+    # unique identity/boundary proof can authorize the zero counter.
+    return (next(iter(proofs))[2],) if len(proofs) == 1 else ()
+
+
 def _aggregate_candidates(
     records: _RecordTable,
     performance: _PerformanceOffsets,
+    *,
+    companion: Optional[_RecordTable] = None,
 ) -> Optional[tuple[int, int, int]]:
     protected = (
         performance.matches_offset,
@@ -1062,6 +1143,17 @@ def _aggregate_candidates(
         if len(by_vector) > _MAX_AGGREGATE_VECTORS:
             return None
 
+    zero_offsets = _aggregate_zero_offsets(records, performance, companion)
+    if zero_offsets:
+        # This proof describes header counters. Do not let numeric bytes in
+        # equipment/addon/history payloads compete as aggregate fields.
+        by_vector = {
+            vector: header_offsets
+            for vector, offsets in by_vector.items()
+            if (header_offsets := [offset for offset in offsets
+                                   if offset + 4 <= performance.class_offset])
+        }
+        by_vector[(0,) * len(records.rows)] = list(zero_offsets)
     vectors = tuple(by_vector)
     subset_lookup: dict[tuple[int, ...], list[tuple[int, ...]]] = {}
     for vector in vectors:
@@ -1184,8 +1276,12 @@ def _orient_aggregate(
 def _learn_aggregate(
     records: _RecordTable,
     performance: _PerformanceOffsets,
+    *,
+    companion: Optional[_RecordTable] = None,
 ) -> Optional[_AggregateOffsets]:
     candidates = _aggregate_candidates(records, performance)
+    if candidates is None and companion is not None:
+        candidates = _aggregate_candidates(records, performance, companion=companion)
     if candidates is None:
         return None
     return _orient_aggregate(records, performance, candidates)
@@ -1633,7 +1729,7 @@ def learn_unknown_solare_details(
         overall_elo if learn_overall else None,
         overall_performance,
         aggregate=(
-            _learn_aggregate(overall_records, overall_performance)
+            _learn_aggregate(overall_records, overall_performance, companion=rich_records)
             if learn_overall and overall_performance is not None
             else None
         ),

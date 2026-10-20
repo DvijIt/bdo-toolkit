@@ -454,6 +454,14 @@ def test_historical_rediscovery_without_low_match_history(path):
         result = replay_solare(path)
     assert result.complete and result.evidence.health.capture_is_clean
     assert excluded > 0
+    if ("aggregate_performance" in baseline.snapshot.overall_capabilities
+            and not path.name.startswith("leaderboard-agent--")):
+        assert "aggregate_performance" in result.snapshot.overall_capabilities
+        assert any(p.total_draws for p in baseline.snapshot.overall_top_100)
+        assert [(p.name, p.total_wins, p.total_draws, p.total_losses)
+                for p in result.snapshot.overall_top_100] == [
+                    (p.name, p.total_wins, p.total_draws, p.total_losses)
+                    for p in baseline.snapshot.overall_top_100]
     for before, after, caps in (
         (baseline.snapshot.players, result.snapshot.players, result.snapshot.class_table_capabilities),
         (baseline.snapshot.overall_top_100, result.snapshot.overall_top_100, result.snapshot.overall_capabilities),
@@ -473,3 +481,41 @@ def test_historical_rediscovery_without_low_match_history(path):
             assert len(player.classes_played) == len(expected.classes_played)
             for a, b in zip(player.classes_played, expected.classes_played):
                 assert (a.slot, a.player_class.code, a.matches, a.wins, a.draws, a.losses) == (b.slot, b.player_class.code, b.matches, b.wins, b.draws, b.losses)
+
+
+def test_historical_aggregate_draw_field_rediscovered_when_zeroed():
+    path = optional_fixture_path("solare--leaderboard-complete-post-patch--92d835cbe9")
+    if not path.is_file():
+        pytest.skip("private Solare capture is not installed")
+    captured = []
+    extract = learning_module._extract_records
+    def collect(*args, **kwargs):
+        table = extract(*args, **kwargs)
+        if table is not None:
+            captured.append(table)
+        return table
+    with patch.object(details_module, "_RICH_DETAIL_LAYOUTS", ()), \
+         patch.object(details_module, "_OVERALL_DETAIL_LAYOUTS", ()), \
+         patch.object(learning_module, "_extract_records", collect):
+        baseline = replay_solare(path)
+    overall = next(t for t in captured if len(t.rows) == 100)
+    rich = next(t for t in captured if len(t.rows) > 100)
+    class_offset, occupied = learning_module._learn_overall_class_offset(overall)
+    perf = learning_module._learn_performance_offsets(overall, class_offset, occupied)
+    known = learning_module._learn_aggregate(overall, perf)
+    assert known is not None
+    assert any(p.total_draws for p in baseline.snapshot.overall_top_100)
+    rows = []
+    for source in overall.rows:
+        row = bytearray(source)
+        # Counterfactual only: turn draws into losses, preserving match totals.
+        for draw, loss in [(known.draws_offset, known.losses_offset)] + [
+            (perf.draws_offset + slot * 4, perf.losses_offset + slot * 4)
+            for slot in range(3)
+        ]:
+            total = learning_module._u32le(row, draw) + learning_module._u32le(row, loss)
+            row[loss:loss + 4] = total.to_bytes(4, "little")
+            row[draw:draw + 4] = bytes(4)
+        rows.append(bytes(row))
+    changed = replace(overall, rows=tuple(rows))
+    assert learning_module._learn_aggregate(changed, perf, companion=rich) == known

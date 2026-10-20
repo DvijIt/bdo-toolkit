@@ -821,3 +821,74 @@ def test_full_performance_discovery_when_every_player_is_experienced():
 def test_match_search_still_rejects_candidate_overflow():
     row = b"".join(value.to_bytes(4, "little") + bytes(8) for value in range(1, 20))
     assert learning._matches_candidates((row,), (1,)) == ()
+
+
+def _zero_aggregate_tables(shift=0):
+    rows, rich_rows = [], []
+    occupied = (1,) * 29 + (3,)
+    for i, n in enumerate(occupied):
+        row, rich = bytearray(1000 + shift), bytearray(300 + shift)
+        name = f"Player{i:03d}".encode("utf-16-le")
+        row[40 + shift:40 + shift + len(name)] = name
+        rich[60 + shift:60 + shift + len(name)] = name
+        identity = (900000 + i * 71).to_bytes(8, "little")
+        row[28 + shift:36 + shift] = identity
+        rich[40 + shift:48 + shift] = identity
+        rich[39 + shift] = 255
+        wins, losses = 0, 0
+        for slot in range(n):
+            w, loss = (60 + i, 40) if slot == 0 else (3, 2)
+            wins += w
+            losses += loss
+            for off, val in ((300, w + loss), (312, w), (336, loss)):
+                start = off + shift + slot * 4
+                row[start:start + 4] = val.to_bytes(4, "little")
+        for off, val in ((20, 3000 - i), (36, losses + (3 if n == 3 else 0)),
+                         (205, wins + (1 if n == 3 else 0)), (209, i + 1)):
+            row[off + shift:off + shift + 4] = val.to_bytes(4, "little")
+        for off, val in ((130, i + 1), (150, 3000 - i)):
+            rich[off + shift:off + shift + 4] = val.to_bytes(4, "little")
+        history = b"0,0,1,1,0,1,1,0,0,0"
+        row[102 + shift:102 + shift + len(history)] = history
+        rows.append(bytes(row))
+        rich_rows.append(bytes(rich))
+    table, companion = _table(tuple(rows)), _table(tuple(rich_rows), role="rich")
+    table.family.name_offset, table.family.rank_offset = 40 + shift, 209 + shift
+    companion.family.name_offset, companion.family.rank_offset = 60 + shift, 130 + shift
+    companion.family.class_offset = 170 + shift
+    perf = learning._PerformanceOffsets(213 + shift, 216 + shift, 300 + shift,
+        312 + shift, 324 + shift, 336 + shift, 360 + shift, occupied)
+    return table, companion, perf
+
+
+@pytest.mark.parametrize("shift", (0, 17, 49))
+def test_zero_aggregate_discovery_follows_shifted_header_fields(shift):
+    table, companion, perf = _zero_aggregate_tables(shift)
+    assert learning._learn_aggregate(table, perf, companion=companion) == (
+        learning._AggregateOffsets(205 + shift, 24 + shift, 36 + shift))
+
+
+@pytest.mark.parametrize("damage", ("identity", "history", "zero", "total", "no_excess", "few_shared", "ambiguous_identity"))
+def test_zero_aggregate_requires_independent_header_and_counter_proof(damage):
+    table, companion, perf = _zero_aggregate_tables()
+    rows = list(table.rows)
+    row = bytearray(rows[-1])
+    if damage == "few_shared":
+        companion = replace(companion, names=companion.names[:19], rows=companion.rows[:19])
+    elif damage == "ambiguous_identity":
+        copies = []
+        for source in companion.rows:
+            changed = bytearray(source)
+            changed[20:28] = changed[40:48]
+            copies.append(bytes(changed))
+        companion = replace(companion, rows=tuple(copies))
+    elif damage == "no_excess":
+        row[205:209] = (95).to_bytes(4, "little")
+        row[36:40] = (44).to_bytes(4, "little")
+    elif damage == "total":
+        row[205:209] = bytes(4)
+    else:
+        row[{"identity": 28, "history": 102, "zero": 24, "total": 205}[damage]] ^= 255
+    rows[-1] = bytes(row)
+    assert learning._learn_aggregate(replace(table, rows=tuple(rows)), perf,
+                                     companion=companion) is None
