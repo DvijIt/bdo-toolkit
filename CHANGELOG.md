@@ -6,6 +6,29 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.10 - 2026-10-20
+
+This release supports Korean Solare names and improves addon inference and
+reordered-packet handling.
+
+### Added
+
+- Support Korean Hangul names in Solare leaderboard captures. Discovery and
+  detail decoding accept precomposed Hangul and mixed Hangul/Latin identifiers,
+  preserving original names across rankings and lookups while retaining bounded
+  validation, suffix rejection, and independent leaderboard cross-checks.
+
+### Fixed
+
+- Validate Solare addon blocks independently of preceding binary bytes. A
+  preceding byte resembling a CSV digit or comma no longer rejects a valid
+  addon block, restoring affected performance and equipment inference while
+  retaining boundary uniqueness, list-shape, and padding checks.
+- Accommodate larger out-of-order Solare packet bursts. Capture and replay now
+  allow 3,000 pending TCP segments per flow, up from 2,048, avoiding premature
+  resets on larger lossless reordered bursts. The 8 MiB pending-payload ceiling
+  and integrity checks remain in effect.
+
 ## 1.0.9 - 2026-10-18
 
 This release expands Solare roster and equipment support, improves performance
