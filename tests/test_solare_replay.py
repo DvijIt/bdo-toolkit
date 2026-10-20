@@ -1404,7 +1404,8 @@ def test_frame_collector_reassembles_generic_messages_and_tracks_health() -> Non
     assert collector.health().retained_large_messages == 0
 
 
-def test_solare_collector_tolerates_large_lossless_npcap_reorder_burst() -> None:
+@pytest.mark.parametrize("piece_size", (23, 7))
+def test_solare_collector_tolerates_large_lossless_npcap_reorder_burst(piece_size: int) -> None:
     observed: list[BDOFrame] = []
     collector = SolareFrameCollector((8889,), observed.append)
     message = bytearray(8_192)
@@ -1413,14 +1414,14 @@ def test_solare_collector_tolerates_large_lossless_npcap_reorder_burst() -> None
     message[3:5] = (0x4567).to_bytes(2, "little")
     stream = bytes(message) * 2
     pieces = tuple(
-        stream[offset : offset + 23]
-        for offset in range(0, len(stream), 23)
+        stream[offset : offset + piece_size]
+        for offset in range(0, len(stream), piece_size)
     )
 
     # Anchor with the SYN, then emulate a Windows/Npcap callback batch whose
-    # first 23 bytes arrive after more than 700 later segments. This exceeds
-    # both the generic item-route count policy and the 665-segment peak from
-    # the July 30 regression capture, but remains under Solare's explicit
+    # prefix arrives after more than 700 or 2,300 later segments. The latter
+    # exceeds the old 2,048-segment cap and the observed 2,088-segment EU burst,
+    # but remains under Solare's explicit
     # count/byte limits and under the ordinary gap deadline.
     collector.process_tcp_segment(
         source_ip=FLOW.source_ip,
@@ -1438,9 +1439,9 @@ def test_solare_collector_tolerates_large_lossless_npcap_reorder_burst() -> None
             source_port=FLOW.source_port,
             destination_ip=FLOW.destination_ip,
             destination_port=FLOW.destination_port,
-            sequence=1_000 + index * 23,
+            sequence=1_000 + index * piece_size,
             payload=piece,
-            timestamp=1.0 + index / 1_000,
+            timestamp=1.0 + index / 10_000,
         )
     collector.process_tcp_segment(
         source_ip=FLOW.source_ip,

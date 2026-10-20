@@ -37,7 +37,7 @@ SOLARE_MAX_ACTIVE_FLOWS = 64
 # callbacks out of sequence. Solare permits a larger per-flow reorder count
 # than the generic item route, while an explicit byte ceiling preserves the
 # existing bounded-memory posture.
-SOLARE_MAX_PENDING_SEGMENTS = 2048
+SOLARE_MAX_PENDING_SEGMENTS = 3000
 SOLARE_MAX_PENDING_BYTES = 8 * 1024 * 1024
 
 PLAYER_NAME_BYTES = frozenset(
