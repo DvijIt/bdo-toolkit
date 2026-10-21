@@ -6,6 +6,20 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.12 - 2026-10-21
+
+This patch restores Solare detail discovery across bounded field padding.
+
+### Fixed
+
+- Recover Solare details across bounded field padding. Zero-outcome inference
+  now retains equivalent byte-position alternatives when a structurally bounded
+  region yields identical values. Equipment discovery validates complete
+  loadouts independently of preceding binary bytes, and aggregate discovery
+  excludes player-name and rank fields from counter candidates. These fixes
+  restore affected leaderboard details while preserving ambiguity and
+  capture-integrity checks.
+
 ## 1.0.11 - 2026-10-20
 
 This patch restores structurally verified overall Solare records on qualifying
