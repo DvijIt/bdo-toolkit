@@ -51,6 +51,9 @@ _JULY_30_UNKNOWN_LAYOUT_CAPTURE = (
     optional_fixture_path('solare--leaderboard-complete-unregistered--dfeb623bda')
 )
 
+_KR_OCTOBER_21_CAPTURE = optional_fixture_path(
+    'solare--leaderboard-complete-kr-post-patch--9731c37014')
+
 _LEARNED_CAPABILITIES = frozenset(
     {"rankings", "elo", "performance", "raw_extensions", "equipment"}
 )
@@ -63,6 +66,45 @@ _LEARNED_OVERALL_CAPABILITIES = (
 class _ReplayPair:
     registered: SolareCaptureResult
     learned: SolareCaptureResult
+
+
+def test_kr_capture_recovers_equivalent_zero_outcomes_and_direct_aggregates() -> None:
+    if not _KR_OCTOBER_21_CAPTURE.is_file():
+        pytest.skip("private October 21 KR capture is not installed")
+    original = learning_module._learn_performance_offsets
+    alternatives = []
+
+    def observe(*args, **kwargs):
+        learned = original(*args, **kwargs)
+        if learned is not None and len(args[0].rows) == 100:
+            alternatives.append(learned.zero_outcome_candidates)
+        return learned
+
+    with patch.object(learning_module, '_learn_performance_offsets', observe):
+        result = replay_solare(_KR_OCTOBER_21_CAPTURE, retain_raw_extensions=True)
+    assert result.complete and result.snapshot is not None
+    assert result.evidence.health.capture_is_clean
+    assert result.evidence.exact_cross_check == 100
+    snapshot = result.snapshot
+    assert len(snapshot.players) == 640 and len(snapshot.overall_top_100) == 100
+    assert snapshot.class_table_capabilities == _LEARNED_CAPABILITIES
+    assert snapshot.overall_capabilities == _LEARNED_OVERALL_CAPABILITIES
+    assert (8068, 8069, 8070) in alternatives
+    by_name = {p.name: p for p in snapshot.players}
+    for overall in snapshot.overall_top_100:
+        rich = by_name[overall.name]
+        assert overall.global_rank == rich.global_rank and overall.elo == rich.elo
+        assert len(overall.classes_played) == len(rich.classes_played)
+        for a, b in zip(overall.classes_played, rich.classes_played):
+            assert (a.player_class, a.matches, a.wins, a.draws, a.losses, a.equipment) == (
+                b.player_class, b.matches, b.wins, b.draws, b.losses, b.equipment)
+            assert a.record_is_balanced and a.draws == 0
+            assert a.equipment is not None and len(a.equipment) == 14
+    # The direct overall totals include activity beyond the three exposed slots.
+    capped = snapshot.overall_top_100[47]
+    assert capped.global_rank == 48 and len(capped.classes_played) == 3
+    assert (capped.total_wins, capped.total_draws, capped.total_losses, capped.total_matches) == (26, 0, 4, 30)
+    assert sum(p.matches for p in capped.classes_played) == 28
 
 
 def test_july_30_unknown_layout_learns_complete_snapshot() -> None:

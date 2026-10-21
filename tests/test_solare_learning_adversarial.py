@@ -122,7 +122,8 @@ def _performance_rows(
     rows: list[bytes] = []
     occupancies = (1,) * 6 + (2,) * 6 + (3,) * 6
     duplicate_counter_offsets = (76, 88, 116, 128)
-    duplicate_aggregate_offsets = (136, 140, 144)
+    # A genuine competing field, outside the independently known name block.
+    duplicate_aggregate_offsets = (810, 814, 818)
 
     for ordinal, occupied in enumerate(occupancies):
         row = bytearray(b"\xFE" * _ROW_SIZE)
@@ -303,6 +304,13 @@ def _csv(values: tuple[int, ...]) -> bytes:
     return ",".join(str(value) for value in values).encode("ascii")
 
 
+def _gear_text() -> bytes:
+    return _csv(tuple(
+        value for slot in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 27, 29)
+        for value in (slot, 740603, 0, 15252, 15252, 0, 0, 0, 0)
+    ))
+
+
 def _raw_rows(
     *,
     duplicate: bool = False,
@@ -314,7 +322,7 @@ def _raw_rows(
     duplicate_addons_base = 14_300
     row_size = 16_000
     occupancies = (1,) * 20 + (2,) * 2 + (3,) * 2
-    gear_text = _csv(tuple(10 + index % 90 for index in range(126)))
+    gear_text = _gear_text()
     addon_text = _csv(tuple(10 + index for index in range(12)))
     rows: list[bytes] = []
 
@@ -610,7 +618,7 @@ def _zero_draw_tail() -> tuple[learning._RecordTable, tuple[int, ...]]:
             addons = b",".join([b"1"] * 12)
             start = 361 + slot * 501
             row[start:start + len(addons)] = addons
-            gear = b",".join([b"10"] * 126)
+            gear = _gear_text()
             start = 1864 + slot * 2001
             row[start:start + len(gear)] = gear
         rows.append(bytes(row))
@@ -626,6 +634,52 @@ def test_zero_draws_require_unique_surrounding_field_boundaries() -> None:
     assert performance is not None
     assert (performance.matches_offset, performance.wins_offset,
             performance.draws_offset, performance.losses_offset) == (15, 27, 7867, 39)
+
+
+@pytest.mark.parametrize("padding", (1, 2, 3))
+def test_zero_outcomes_retain_every_equivalent_position(padding):
+    records, occupancies = _zero_draw_tail()
+    records.family.frame_length += padding
+    records = replace(records, rows=tuple(row + bytes(padding) for row in records.rows))
+    performance = learning._learn_performance_offsets(records, 12, occupancies)
+    assert performance is not None
+    assert performance.draws_offset == 7867  # Representative reader position.
+    assert performance.zero_outcome_candidates == tuple(range(7867, 7868 + padding))
+    assert all(row[offset:offset + 12] == bytes(12)
+               for row in records.rows for offset in performance.zero_outcome_candidates)
+    # The ephemeral ID records the alternative proof, not an exact address claim.
+    assert learning._layout_id("rich", records, 51, performance) != learning._layout_id(
+        "rich", records, 51, replace(performance, zero_outcome_candidates=()))
+
+
+def test_zero_outcomes_allow_one_separate_unassigned_word_and_binary_gear_prefix():
+    records, occupancies = _zero_draw_tail()
+    records.family.frame_length += 6
+    rows = tuple(row[:1864] + b"\0\0\0\x33" + row[1864:] + bytes(2)
+                 for row in records.rows)
+    performance = learning._learn_performance_offsets(replace(records, rows=rows), 12, occupancies)
+    assert performance is not None
+    assert performance.zero_outcome_candidates == (7871, 7872, 7873)
+
+
+@pytest.mark.parametrize("damage", ("large_tail", "nonzero_before", "nonzero_after", "other_wide_gap", "extra_word"))
+def test_zero_outcome_equivalence_rejects_unproved_containers(damage):
+    records, occupancies = _zero_draw_tail()
+    rows = [row + bytes(2) for row in records.rows]
+    extra = 2
+    if damage == "large_tail":
+        rows = [row + bytes(2) for row in rows]
+        extra += 2
+    elif damage in ("nonzero_before", "nonzero_after"):
+        row = bytearray(rows[0])
+        row[7867 if damage == "nonzero_before" else -1] = 1
+        rows[0] = bytes(row)
+    else:
+        size = 12 if damage == "other_wide_gap" else 5
+        rows = [row[:1864] + bytes(size) + row[1864:] for row in rows]
+        extra += size
+    records.family.frame_length += extra
+    assert learning._learn_performance_offsets(replace(records, rows=tuple(rows)), 12, occupancies) is None
 
 
 @pytest.mark.parametrize("damage", ("extra_gap", "nonzero_draw", "broken_gear", "broken_addons", "broken_history", "unbalanced"))
@@ -727,6 +781,32 @@ def test_addon_boundary_validation_ignores_preceding_binary_byte(preceding, coun
         minimum_text_length=20, maximum_text_length=100,
         allow_empty_slots=True,
     ) == (361,)
+
+
+@pytest.mark.parametrize("preceding", (ord("0"), ord("3"), ord("9"), ord(",")))
+def test_equipment_boundary_uses_typed_blocks_when_every_primary_has_binary_prefix(preceding):
+    records, performance = _raw_rows()
+    rows = []
+    for original in records.rows:
+        row = bytearray(original)
+        row[99] = preceding
+        rows.append(bytes(row))
+    assert learning._raw_base_candidates(
+        rows, performance.occupancies, value_count=126, slot_size=2001,
+        minimum_text_length=300, maximum_text_length=500,
+    ) == (100,)
+
+
+def test_aggregate_candidates_exclude_the_independent_name_field():
+    records, performance = _performance_rows(include_aggregate=True)
+    rows = []
+    for original in records.rows:
+        row = bytearray(original)
+        for source, alias in zip((100, 104, 108), (136, 140, 144)):
+            row[alias:alias + 4] = row[source:source + 4]
+        rows.append(bytes(row))
+    assert learning._learn_aggregate(replace(records, rows=tuple(rows)), performance) == (
+        learning._AggregateOffsets(100, 104, 108))
 
 
 def test_blank_addon_requires_entire_slot_to_be_zero():

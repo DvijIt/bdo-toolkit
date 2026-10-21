@@ -68,6 +68,8 @@ _MAX_AGGREGATE_VECTORS = 256
 _MAX_LEARNED_RECORD_END = 32 * 1024
 _MIN_HISTORY_DISCRIMINATORS = 5
 _PREFILTER_ROWS = 32
+_MAX_UNASSIGNED_FIELD_BYTES = 4
+_MAX_ZERO_OUTCOME_PADDING = 3
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,9 @@ class _PerformanceOffsets:
     losses_offset: int
     history_offset: int
     occupancies: tuple[int, ...]
+    # Alternative positions in one bounded zero region. The representative
+    # offset is only a reader position; it does not establish an exact address.
+    zero_outcome_candidates: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -474,9 +479,10 @@ def _anchored_zero_outcome_offsets(
 
     Require two complementary active outcomes and independently validated
     text-array boundaries. Across the tail from class codes to record end,
-    exactly one 12-byte gap may remain; other gaps are at most three bytes
-    of patch padding. No arbitrary zero region is promoted to an outcome.
-    The normal solution search still rejects multiple interpretations.
+    one bounded 12..15-byte zero region may remain; other unassigned fields
+    are at most four bytes. Enumerate every position in that region: all must
+    decode the same zero vector. No arbitrary zero region is promoted.
+    Distinct container proofs and conflicting counter solutions still reject.
     """
     complementary = tuple(
         (first_offset, second_offset)
@@ -517,7 +523,7 @@ def _anchored_zero_outcome_offsets(
     ]
     if elos[0] >= class_field:
         fixed.append((elos[0], 4))
-    candidates: set[int] = set()
+    proofs: set[tuple[int, ...]] = set()
     for first_offset, second_offset in complementary:
         intervals = sorted(fixed + [(first_offset, 12), (second_offset, 12)])
         cursor = class_field
@@ -534,13 +540,17 @@ def _anchored_zero_outcome_offsets(
             continue
         if cursor < records.record_end:
             gaps.append((cursor, records.record_end - cursor))
-        wide = [(start, size) for start, size in gaps if size > 3]
-        if len(wide) != 1 or wide[0][1] != 12:
+        wide = [(start, size) for start, size in gaps if size >= 12]
+        if (len(wide) != 1 or wide[0][1] > 12 + _MAX_ZERO_OUTCOME_PADDING
+                or any(_MAX_UNASSIGNED_FIELD_BYTES < size < 12
+                       for _, size in gaps)):
             continue
-        offset = wide[0][0]
-        if all(row[offset:offset + 12] == bytes(12) for row in rows):
-            candidates.add(offset)
-    return tuple(sorted(candidates))
+        start, size = wide[0]
+        if all(row[start:start + size] == bytes(size) for row in rows):
+            proofs.add(tuple(range(start, start + size - 12 + 1)))
+            if len(proofs) > 1:
+                return ()
+    return next(iter(proofs)) if proofs else ()
 
 
 def _balanced_counter_solution(
@@ -575,7 +585,9 @@ def _balanced_counter_solution(
                 records, occupancies, matches_offset, matches, outcomes,
             )
             outcomes += tuple(
-                (offset, (0,) * len(matches)) for offset in zero_offsets
+                # All placements in the proved container have identical values.
+                # Keep one reader position, preserving alternatives below.
+                (offset, (0,) * len(matches)) for offset in zero_offsets[:1]
             )
         by_vector: dict[tuple[int, ...], list[int]] = {}
         for offset, vector in outcomes:
@@ -829,6 +841,16 @@ def _learn_performance_offsets(
     if oriented is None:
         return None
     wins_offset, draws_offset, losses_offset = oriented
+    active = tuple(
+        (offset, vector) for offset in outcome_offsets
+        if any(vector := _counter_vector(records.rows, offset))
+    )
+    zero_candidates = (
+        _anchored_zero_outcome_offsets(
+            records, occupancies, matches_offset,
+            _counter_vector(records.rows, matches_offset), active,
+        ) if len(active) == 2 else ()
+    )
     return _PerformanceOffsets(
         class_offset=class_offset,
         spec_offset=spec_offset,
@@ -838,6 +860,7 @@ def _learn_performance_offsets(
         losses_offset=losses_offset,
         history_offset=history_offset,
         occupancies=occupancies,
+        zero_outcome_candidates=zero_candidates if len(zero_candidates) > 1 else (),
     )
 
 
@@ -882,9 +905,10 @@ def _raw_base_candidates(
     candidates: list[int] = []
     required_end = _CLASS_SLOT_COUNT * slot_size
     offsets: Sequence[int] = range(len(first) - required_end + 1)
-    if allow_empty_slots:
-        # A blank first player cannot seed discovery. Gather text witnesses
-        # from every record, then validate the entire table at each boundary.
+    use_text_witnesses = allow_empty_slots or value_count == 126
+    if use_text_witnesses:
+        # Blank addons or a CSV-like preceding binary byte can hide one witness.
+        # Gather witnesses across records and slots, then validate each boundary.
         pattern = rb"(?<![0-9,])[0-9]+(?:,[0-9]+){" + str(value_count - 1).encode() + rb"}\x00"
         witnessed = {
             match.start() - slot * slot_size
@@ -895,10 +919,10 @@ def _raw_base_candidates(
         }
         offsets = sorted(witnessed)
     for offset in offsets:
-        if allow_empty_slots:
-            # Addon boundary evidence permits zero to six complete pairs.
-            # Validate every occupied block, including its zero padding; a
-            # population percentage must not decide whether partial lists fit.
+        if allow_empty_slots or value_count == 126:
+            # Gear must satisfy its typed slot grammar; addons permit zero to
+            # six complete pairs. Validate every occupied block and its padding;
+            # a population percentage must not decide whether partial lists fit.
             valid_blocks = True
             for row, occupied in zip(rows, occupancies):
                 for slot in range(occupied):
@@ -907,7 +931,12 @@ def _raw_base_candidates(
                     if len(block) != slot_size:
                         valid_blocks = False
                         break
-                    if not any(block):
+                    if not any(block) and allow_empty_slots:
+                        continue
+                    if value_count == 126:
+                        if _parse_equipment(block) is None:
+                            valid_blocks = False
+                            break
                         continue
                     # The candidate fixes this block's boundary. A byte in the
                     # preceding binary field must not extend its CSV text.
@@ -925,7 +954,10 @@ def _raw_base_candidates(
                 if len(candidates) > 1:
                     return ()
             continue
-        first_shape = _csv_integer_count(first, offset)
+        first_shape = (
+            _csv_integer_count(first[offset:offset + slot_size], 0)
+            if use_text_witnesses else _csv_integer_count(first, offset)
+        )
         if not allow_empty_slots and (
             first_shape is None
             or first_shape[0] != value_count
@@ -934,7 +966,7 @@ def _raw_base_candidates(
             continue
         valid = True
         for row in rows:
-            shape = _csv_integer_count(row, offset)
+            shape = _csv_integer_count(row[offset:offset + slot_size], 0)
             if allow_empty_slots and not any(row[offset : offset + slot_size]):
                 continue
             if (
@@ -967,7 +999,7 @@ def _raw_base_candidates(
                 if allow_empty_slots and not any(row[start:start + slot_size]):
                     matching += 1
                     continue
-                shape = _csv_integer_count(row, start)
+                shape = _csv_integer_count(row[start:start + slot_size], 0)
                 if (
                     shape is not None
                     and shape[0] == value_count
@@ -1124,8 +1156,17 @@ def _aggregate_candidates(
     ):
         return None
 
+    zero_offsets = _aggregate_zero_offsets(records, performance, companion)
+    # A proven header counter limits the search before applying fan-out bounds.
+    # Name/rank bytes are independently owned fields, including name padding;
+    # numeric-looking UTF-16 bytes cannot be competing lifetime counters.
+    scan_end = performance.class_offset if zero_offsets else records.record_end
+    forbidden = ((records.family.name_offset, 62), (records.family.rank_offset, 4))
     by_vector: dict[tuple[int, ...], list[int]] = {}
-    for offset in range(records.record_end - 3):
+    for offset in range(scan_end - 3):
+        if any(offset < start + size and start < offset + 4
+               for start, size in forbidden):
+            continue
         if any(
             _ranges_overlap(offset, base + slot * 4)
             for base in protected
@@ -1143,16 +1184,7 @@ def _aggregate_candidates(
         if len(by_vector) > _MAX_AGGREGATE_VECTORS:
             return None
 
-    zero_offsets = _aggregate_zero_offsets(records, performance, companion)
     if zero_offsets:
-        # This proof describes header counters. Do not let numeric bytes in
-        # equipment/addon/history payloads compete as aggregate fields.
-        by_vector = {
-            vector: header_offsets
-            for vector, offsets in by_vector.items()
-            if (header_offsets := [offset for offset in offsets
-                                   if offset + 4 <= performance.class_offset])
-        }
         by_vector[(0,) * len(records.rows)] = list(zero_offsets)
     vectors = tuple(by_vector)
     subset_lookup: dict[tuple[int, ...], list[tuple[int, ...]]] = {}
@@ -1388,6 +1420,8 @@ def _layout_id(
             )
         ),
     )
+    if performance is not None and performance.zero_outcome_candidates:
+        fields += (("equivalent-zero-outcome-offsets", performance.zero_outcome_candidates),)
     digest = hashlib.sha256(repr(fields).encode("ascii")).hexdigest()[:16]
     return f"solare-{role}-ephemeral-v1-{digest}"
 
