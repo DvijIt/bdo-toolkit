@@ -6,6 +6,20 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.13 - 2026-10-23
+
+This release expands language support for Solare player names.
+
+### Added
+
+- Support Thai, Japanese, and Chinese Solare player names. Shared discovery and
+  detail decoding now accept Thai letters and combining marks, Japanese kana
+  and Kanji, and traditional/simplified Chinese Han characters, including
+  supplementary characters through strict UTF-16 surrogate handling. Exact
+  names, suffix rejection, and the existing field-length bound are preserved.
+  Packet layouts and public output fields are unchanged; real regional
+  recordings remain necessary to validate layouts outside tested regions.
+
 ## 1.0.12 - 2026-10-21
 
 This patch restores Solare detail discovery across bounded field padding.
