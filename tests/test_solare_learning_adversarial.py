@@ -972,3 +972,48 @@ def test_zero_aggregate_requires_independent_header_and_counter_proof(damage):
     rows[-1] = bytes(row)
     assert learning._learn_aggregate(replace(table, rows=tuple(rows)), perf,
                                      companion=companion) is None
+
+@pytest.mark.parametrize("damage", (None, "counter", "rank", "class", "few_shared", "ambiguous_source"))
+def test_unoriented_counter_geometry_requires_independent_exact_joins(damage):
+    source, performance = _performance_rows(duplicate_counters=damage == "ambiguous_source")
+    source = _table(source.rows * 2)
+    occupied = performance.occupancies * 2
+    target = _table(source.rows)
+    if damage == "counter":
+        row = bytearray(target.rows[0])
+        row[performance.matches_offset] ^= 1
+        target = replace(target, rows=(bytes(row),) + target.rows[1:])
+    elif damage == "rank":
+        target = replace(target, ranks=(999,) + target.ranks[1:])
+    elif damage == "class":
+        row = bytearray(target.rows[0]); row[_CLASS_OFFSET] = 30
+        target = replace(target, rows=(bytes(row),) + target.rows[1:])
+    elif damage == "few_shared":
+        target = replace(target, names=tuple(n if i < 19 else "Other" + n for i, n in enumerate(target.names)))
+    check = learning._counter_geometry_check(
+        target, _CLASS_OFFSET, occupied, source, _CLASS_OFFSET, occupied,
+    )
+    if damage == "ambiguous_source":
+        assert check is None
+    else:
+        assert check is not None
+        outcomes = (performance.losses_offset, performance.draws_offset, performance.wins_offset)
+        assert check(performance.matches_offset, outcomes) is (damage is None)
+
+
+def test_counter_solver_applies_evidence_before_rejecting_multiple_alignments():
+    records, performance = _performance_rows(duplicate_counters=True)
+    calls = []
+    def validate(matches, outcomes):
+        calls.append((matches, outcomes))
+        return matches == performance.matches_offset and set(outcomes) == {
+            performance.wins_offset, performance.draws_offset, performance.losses_offset,
+        }
+    result = learning._balanced_counter_solution(
+        records.rows, performance.occupancies, validate=validate,
+    )
+    assert result is not None and result[0] == performance.matches_offset
+    assert len(calls) > 1
+    assert learning._balanced_counter_solution(
+        records.rows, performance.occupancies, validate=lambda *args: True,
+    ) is None

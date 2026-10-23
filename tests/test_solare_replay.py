@@ -344,7 +344,7 @@ def test_korean_name_reader_preserves_full_identifiers_and_rejects_suffixes(name
 
 
 @pytest.mark.parametrize("prefix", (
-    "ผู้กล้า", "ひらがな", "カタカナ", "日本語", "简体汉字", "繁體漢字",
+    "\u0e48\u0e48Example", "\u0e49ไทย", "\u0e4bSample", "ผู้กล้า", "ひらがな", "カタカナ", "日本語", "简体汉字", "繁體漢字",
     "𠮷野家", "ｶﾞ", "か\u3099", "葛\U000e0100", "KR한_ไทย漢カ",
 ))
 def test_asian_script_names_confirm_complete_tables_without_normalization(prefix):
@@ -359,7 +359,7 @@ def test_asian_script_names_confirm_complete_tables_without_normalization(prefix
     assert result.evidence.overall_layout.name_offset == 30
 
 
-@pytest.mark.parametrize("name", ("ผู้กล้า", "𠮷野家", "葛\U000e0100", "か\u3099", "繁體汉字"))
+@pytest.mark.parametrize("name", ("\u0e48\u0e48Example", "\u0e49ไทย", "\u0e4bSample", "ผู้กล้า", "𠮷野家", "葛\U000e0100", "か\u3099", "繁體汉字"))
 def test_asian_name_readers_reject_every_suffix(name):
     from bdo_toolkit.solare._details import _read_name
     from bdo_toolkit.solare._discovery import _identifier_starts_here
@@ -371,7 +371,7 @@ def test_asian_name_readers_reject_every_suffix(name):
 
 
 @pytest.mark.parametrize("name", (
-    "\u0e00", "\u0e3f", "\u3040", "\u30fb", "\u0e48Thai",
+    "\u0e00", "\u0e3f", "\u3040", "\u30fb",
     "\u3099かな", "\u3000漢", "漢\u200b字", "A\ufe00", "A\U000e0100",
     "\U0001f600", "\ue000", "𠮷" * 16, "ก" * 32,
 ))

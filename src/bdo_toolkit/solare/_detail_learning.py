@@ -16,7 +16,7 @@ import itertools
 import re
 from collections import Counter
 from dataclasses import dataclass, replace
-from typing import Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 from bdo_toolkit._protocol import BDOFrame
 
@@ -558,6 +558,7 @@ def _balanced_counter_solution(
     occupancies: Sequence[int],
     *,
     records: Optional[_RecordTable] = None,
+    validate: Optional[Callable[[int, tuple[int, int, int]], bool]] = None,
 ) -> Optional[tuple[int, tuple[int, int, int]]]:
     record_size = len(rows[0])
     occupied_activity = [0] * _CLASS_SLOT_COUNT
@@ -624,15 +625,13 @@ def _balanced_counter_solution(
                             ordered = sorted(
                                 (left_offset, right_offset, third_offset)
                             )
-                            solutions.add(
-                                (
-                                    matches_offset,
-                                    (ordered[0], ordered[1], ordered[2]),
-                                )
-                            )
-                            if len(solutions) > 1:
+                            solutions.add((matches_offset, (ordered[0], ordered[1], ordered[2])))
+                            # Never truncate a search and claim uniqueness.
+                            if len(solutions) > 64:
                                 return None
-    return next(iter(solutions)) if len(solutions) == 1 else None
+    supported = [candidate for candidate in sorted(solutions)
+                 if validate is None or validate(*candidate)]
+    return supported[0] if len(supported) == 1 else None
 
 
 def _history_candidates(
@@ -794,20 +793,87 @@ def _companion_outcomes_agree(
     return shared >= 20 and discriminating_names >= _MIN_HISTORY_DISCRIMINATORS
 
 
+def _counter_geometry_check(
+    records: _RecordTable, class_offset: int, occupancies: tuple[int, ...],
+    source: _RecordTable, source_class: int, source_occupancies: tuple[int, ...],
+) -> Optional[Callable[[int, tuple[int, int, int]], bool]]:
+    # Establish numerical geometry without assigning any W/D/L labels.
+    # An ambiguous source cannot corroborate another ambiguous response.
+    counters = _balanced_counter_solution(
+        source.rows, source_occupancies, records=source,
+    )
+    if counters is None:
+        return None
+    source_matches, source_outcomes = counters
+    if len(_history_candidates(source.rows, source_occupancies, source_matches)) != 1:
+        return None
+    by_name = {name: i for i, name in enumerate(source.names)}
+
+    def agrees(matches: int, outcomes: tuple[int, int, int]) -> bool:
+        shared = 0
+        for row, name, rank, occupied in zip(
+            records.rows, records.names, records.ranks, occupancies,
+        ):
+            ordinal = by_name.get(name)
+            if ordinal is None:
+                continue
+            other = source.rows[ordinal]
+            if rank != source.ranks[ordinal] or occupied != source_occupancies[ordinal]:
+                return False
+            for slot in range(occupied):
+                if row[class_offset + slot] != other[source_class + slot]:
+                    return False
+                if _u32le(row, matches + slot * 4) != _u32le(other, source_matches + slot * 4):
+                    return False
+                if sorted(_u32le(row, off + slot * 4) for off in outcomes) != sorted(
+                    _u32le(other, off + slot * 4) for off in source_outcomes
+                ):
+                    return False
+            shared += 1
+        return shared >= 20
+    return agrees
+
+
 def _learn_performance_offsets(
     records: _RecordTable,
     class_offset: int,
     occupancies: tuple[int, ...],
     *,
     companion: Optional[tuple[_RecordTable, _PerformanceOffsets]] = None,
+    counter_check: Optional[Callable[[int, tuple[int, int, int]], bool]] = None,
 ) -> Optional[_PerformanceOffsets]:
     spec_offset = _learn_spec_offset(records.rows, occupancies)
-    counters = _balanced_counter_solution(
-        records.rows, occupancies, records=records,
-    )
-    if spec_offset is None or counters is None:
+    if spec_offset is None:
         return None
-    matches_offset, outcome_offsets = counters
+
+    def validate(matches: int, outcomes: tuple[int, int, int]) -> bool:
+        if counter_check is not None and not counter_check(matches, outcomes):
+            return False
+        return _validate_performance_candidate(
+            records, class_offset, occupancies, spec_offset, matches, outcomes,
+            companion=companion,
+        ) is not None
+    counters = _balanced_counter_solution(
+        records.rows, occupancies, records=records, validate=validate,
+    )
+    if counters is None:
+        return None
+    return _validate_performance_candidate(
+        records, class_offset, occupancies, spec_offset, *counters,
+        companion=companion,
+    )
+
+
+def _validate_performance_candidate(
+    records: _RecordTable,
+    class_offset: int,
+    occupancies: tuple[int, ...],
+    spec_offset: int,
+    matches_offset: int,
+    outcome_offsets: tuple[int, int, int],
+    *,
+    companion: Optional[tuple[_RecordTable, _PerformanceOffsets]] = None,
+) -> Optional[_PerformanceOffsets]:
     histories = _history_candidates(
         records.rows,
         occupancies,
@@ -839,6 +905,11 @@ def _learn_performance_offsets(
         if len(supported) == 1:
             oriented = supported[0]
     if oriented is None:
+        return None
+    if companion is not None and not _companion_outcomes_agree(
+        records, class_offset, occupancies, matches_offset, oriented,
+        companion[0], companion[1],
+    ):
         return None
     wins_offset, draws_offset, losses_offset = oriented
     active = tuple(
@@ -1743,6 +1814,17 @@ def learn_unknown_solare_details(
         and overall_class is not None
         else None
     )
+    if (learn_overall and overall_performance is None and rich_performance is None
+            and overall_class is not None and rich.class_offset is not None
+            and rich_occupancies is not None):
+        check = _counter_geometry_check(
+            overall_records, overall_class[0], overall_class[1],
+            rich_records, rich.class_offset, rich_occupancies,
+        )
+        if check is not None:
+            overall_performance = _learn_performance_offsets(
+                overall_records, overall_class[0], overall_class[1], counter_check=check,
+            )
     if learn_overall and overall_performance is None and rich_performance is not None and overall_class is not None:
         overall_performance = _learn_performance_offsets(
             overall_records, overall_class[0], overall_class[1],

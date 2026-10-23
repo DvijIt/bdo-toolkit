@@ -204,7 +204,8 @@ def _read_player_identifier(data: bytes, offset: int, max_chars: int = 32) -> st
             return data[offset:position].decode("utf-16-le")
         if not _is_player_identifier_codepoint(code):
             return ""
-        if position == offset and unicodedata.category(chr(code)).startswith("M"):
+        if (position == offset and unicodedata.category(chr(code)).startswith("M")
+                and not 0x0E48 <= code <= 0x0E4B):
             return ""
         if (0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF) and not (
             unicodedata.name(chr(previous_code), "").startswith(
