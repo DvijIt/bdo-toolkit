@@ -6,6 +6,22 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.14 - 2026-10-23
+
+This patch improves Thai Solare name handling and counter-layout discovery.
+
+### Fixed
+
+- Preserve Thai tone marks at the start of Solare names. Valid names beginning
+  with Thai tone marks now retain their exact spelling and no longer prevent
+  complete leaderboard discovery. Existing UTF-16 and name-boundary checks remain.
+- Resolve Solare counter alignment ambiguity using independent evidence.
+  Bounded arithmetic candidates now pass through history and companion
+  validation, recovering verified performance, equipment, and aggregate details
+  when byte-shifted counters also balance. Independently established companion
+  numerical geometry can reject scaled aliases without requiring short-match
+  players; unresolved ambiguity and search overflow still withhold details.
+
 ## 1.0.13 - 2026-10-23
 
 This release expands language support for Solare player names.
