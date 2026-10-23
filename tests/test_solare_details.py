@@ -443,18 +443,19 @@ def _synthetic_snapshot(
 
 
 @pytest.mark.parametrize("layout", _LAYOUTS, ids=lambda item: item.layout_id)
-def test_registered_details_preserve_korean_names_and_performance(layout: _Layout) -> None:
-    synthetic = _synthetic_snapshot(layout, name_prefix="\uac00\ub098")
+@pytest.mark.parametrize("prefix", ("\uac00\ub098", "ผู้กล้า", "かなカナ漢", "简体汉字", "繁體漢字", "𠮷"))
+def test_registered_details_preserve_asian_names_and_performance(layout: _Layout, prefix: str) -> None:
+    synthetic = _synthetic_snapshot(layout, name_prefix=prefix)
     rich = decode_solare_details(synthetic.rich_frames, synthetic.rich)
     overall = decode_solare_overall_details(synthetic.overall_frames, synthetic.overall)
     assert rich is not None
     assert overall is not None
-    assert rich.players[0].name == "\uac00\ub0980001"
-    assert rich.players[-1].name == "\uac00\ub0980620"
+    assert rich.players[0].name == prefix + "0001"
+    assert rich.players[-1].name == prefix + "0620"
     assert rich.players[0].elo == 9999
     assert rich.players[0].classes_played[0].matches == 101
-    assert overall.entries[0].name == "\uac00\ub0980001"
-    assert overall.entries[-1].name == "\uac00\ub0980100"
+    assert overall.entries[0].name == prefix + "0001"
+    assert overall.entries[-1].name == prefix + "0100"
     assert "performance" in overall.capabilities
     assert overall.entries[0].classes_played[0].wins == 120
 

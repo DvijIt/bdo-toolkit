@@ -343,6 +343,88 @@ def test_korean_name_reader_preserves_full_identifiers_and_rejects_suffixes(name
     assert not _identifier_starts_here(data, 4)
 
 
+@pytest.mark.parametrize("prefix", (
+    "ผู้กล้า", "ひらがな", "カタカナ", "日本語", "简体汉字", "繁體漢字",
+    "𠮷野家", "ｶﾞ", "か\u3099", "葛\U000e0100", "KR한_ไทย漢カ",
+))
+def test_asian_script_names_confirm_complete_tables_without_normalization(prefix):
+    frames = _complete_frames(name_prefix=prefix, include_agent=True)
+    result = build_solare_result(frames, _health(frames))
+    assert result.complete
+    assert result.snapshot is not None
+    assert result.evidence.exact_cross_check == 100
+    assert result.snapshot.players[0].name == prefix + "0001"
+    assert result.snapshot.overall_top_100[0].name == prefix + "0001"
+    assert result.evidence.rich_layout.name_offset == 20
+    assert result.evidence.overall_layout.name_offset == 30
+
+
+@pytest.mark.parametrize("name", ("ผู้กล้า", "𠮷野家", "葛\U000e0100", "か\u3099", "繁體汉字"))
+def test_asian_name_readers_reject_every_suffix(name):
+    from bdo_toolkit.solare._details import _read_name
+    from bdo_toolkit.solare._discovery import _identifier_starts_here
+    data = bytes(2) + name.encode("utf-16-le") + bytes(2)
+    assert _read_name(data, 2) == name
+    assert _identifier_starts_here(data, 2)
+    for offset in range(4, len(data) - 2, 2):
+        assert not _identifier_starts_here(data, offset)
+
+
+@pytest.mark.parametrize("name", (
+    "\u0e00", "\u0e3f", "\u3040", "\u30fb", "\u0e48Thai",
+    "\u3099かな", "\u3000漢", "漢\u200b字", "A\ufe00", "A\U000e0100",
+    "\U0001f600", "\ue000", "𠮷" * 16, "ก" * 32,
+))
+def test_asian_name_support_rejects_symbols_unassigned_and_overlong_names(name):
+    from bdo_toolkit.solare._discovery import _read_player_identifier
+    assert _read_player_identifier(name.encode("utf-16-le") + bytes(2), 0) == ""
+
+
+@pytest.mark.parametrize("wire", (
+    b"\x00\xdc\x00\x00", b"\x00\xd8A\x00\x00\x00",
+    b"\x00\xd8\x00", b"\x00\xd8",
+))
+def test_asian_name_support_rejects_malformed_surrogate_pairs(wire):
+    from bdo_toolkit.solare._discovery import _read_player_identifier
+    assert _read_player_identifier(wire, 0) == ""
+
+
+def test_supplementary_han_names_respect_utf16_unit_limit():
+    from bdo_toolkit.solare._discovery import _read_player_identifier
+    name = "𠮷" * 15 + "漢"  # 31 code units plus terminator.
+    assert _read_player_identifier(name.encode("utf-16-le") + bytes(2), 0) == name
+
+
+def test_name_column_survives_han_like_binary_word_before_first_record():
+    frames = list(_complete_frames())
+    message = bytearray(frames[0].message)
+    for base in (0, 4200):
+        message[base + 18:base + 20] = "漢".encode("utf-16-le")
+    frames[0] = replace(frames[0], message=bytes(message))
+    result = build_solare_result(tuple(frames), _health(tuple(frames)))
+    assert result.complete
+    assert result.snapshot.players[0].name == "Player0001"
+    assert result.evidence.rich_layout.name_offset == 20
+
+
+@pytest.mark.parametrize("ambiguous", (False, True))
+def test_menu_name_columns_require_unique_spacing_despite_byte_shift_aliases(ambiguous):
+    frames = []
+    for i, frame in enumerate(_menu_frames()):
+        message = bytearray(frame.message)
+        for slot, offset in enumerate((100, 1600, 3100, 4600, 6100)):
+            message[offset:offset + 64] = bytes(64)
+            # Latin-only text shifted by one byte also looks like assigned Han.
+            # A Thai first character breaks that alias in the middle column.
+            prefix = "ก" if slot == 2 and not ambiguous else "Menu"
+            _put_name(message, offset, prefix + chr(65 + i) + chr(65 + slot))
+        frames.append(replace(frame, message=bytes(message)))
+    result = build_solare_result(tuple(frames), _health(tuple(frames)))
+    assert result.status is (SolareDetectionStatus.INCONCLUSIVE if ambiguous
+                            else SolareDetectionStatus.MENU_CONTEXT)
+    assert result.snapshot is None
+
+
 @pytest.mark.parametrize("data", (
     "\uac00".encode("utf-16-le"),                 # missing terminator
     "\uac00".encode("utf-16-le") + b"\x00",      # truncated code unit

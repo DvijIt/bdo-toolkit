@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from typing import DefaultDict, Iterable, Optional, Sequence, cast
@@ -148,24 +149,70 @@ class _NamePair:
 
 
 def _is_player_identifier_codepoint(code: int) -> bool:
-    # Korean captures use precomposed Hangul syllables in the same UTF-16LE
-    # fields. Keep the accepted alphabet bounded rather than accepting arbitrary
-    # Unicode text from binary fields during structural discovery.
-    return code in PLAYER_NAME_BYTES or 0xAC00 <= code <= 0xD7A3
+    if code in PLAYER_NAME_BYTES or 0xAC00 <= code <= 0xD7A3:
+        return True
+    # Assigned letters/marks/numbers in the requested scripts, not entire
+    # Unicode blocks (which also include punctuation and unassigned values).
+    if (0x0E00 <= code <= 0x0E7F                 # Thai
+            or 0x3040 <= code <= 0x30FF          # Hiragana / Katakana
+            or 0x31F0 <= code <= 0x31FF          # Katakana phonetic extensions
+            or 0xFF66 <= code <= 0xFF9F          # Halfwidth Katakana
+            or 0x1AFF0 <= code <= 0x1AFFF        # Kana Extended-B
+            or 0x1B000 <= code <= 0x1B16F):      # Supplement / Extended-A / Small Kana
+        return unicodedata.category(chr(code))[0] in "LMN"
+    if code in (0x3005, 0x3006, 0x3007) or 0x3031 <= code <= 0x3035:
+        return True  # Ideographic and kana iteration/letter marks.
+    if (0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF
+            or 0x20000 <= code <= 0x3FFFF):
+        # Han is shared by Japanese Kanji and both Chinese writing systems.
+        return unicodedata.name(chr(code), "").startswith(
+            ("CJK UNIFIED IDEOGRAPH-", "CJK COMPATIBILITY IDEOGRAPH-"))
+    if 0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF:
+        return True  # Preserve ideographic variation sequences verbatim.
+    return False
+
+
+def _identifier_scalar(data: bytes, position: int) -> Optional[tuple[int, int]]:
+    """Read one strict UTF-16 scalar and its byte width within the field."""
+    if position < 0 or position + 1 >= len(data):
+        return None
+    code = data[position] | data[position + 1] << 8
+    if 0xD800 <= code <= 0xDBFF:
+        if position + 3 >= len(data):
+            return None
+        low = data[position + 2] | data[position + 3] << 8
+        if not 0xDC00 <= low <= 0xDFFF:
+            return None
+        return 0x10000 + ((code - 0xD800) << 10) + low - 0xDC00, 4
+    return None if 0xDC00 <= code <= 0xDFFF else (code, 2)
 
 
 def _read_player_identifier(data: bytes, offset: int, max_chars: int = 32) -> str:
     if offset < 0:
         return ""
-    for index in range(max_chars):
-        position = offset + index * 2
-        if position + 1 >= len(data):
+    position = offset
+    limit = offset + max_chars * 2
+    previous_code = 0
+    while position + 1 < limit:
+        scalar = _identifier_scalar(data, position)
+        if scalar is None:
             return ""
-        code = data[position] | data[position + 1] << 8
+        code, width = scalar
+        if position + width > limit:
+            return ""
         if code == 0:
             return data[offset:position].decode("utf-16-le")
         if not _is_player_identifier_codepoint(code):
             return ""
+        if position == offset and unicodedata.category(chr(code)).startswith("M"):
+            return ""
+        if (0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF) and not (
+            unicodedata.name(chr(previous_code), "").startswith(
+                ("CJK UNIFIED IDEOGRAPH-", "CJK COMPATIBILITY IDEOGRAPH-"))
+        ):
+            return ""
+        previous_code = code
+        position += width
     return ""
 
 
@@ -174,13 +221,14 @@ def _identifier_starts_here(data: bytes, offset: int) -> bool:
 
     if not _read_player_identifier(data, offset):
         return False
-    if (
-        offset >= 2
-        and _is_player_identifier_codepoint(
-            data[offset - 2] | data[offset - 1] << 8
-        )
-    ):
-        return False
+    if offset >= 2:
+        previous = data[offset - 2] | data[offset - 1] << 8
+        if 0xDC00 <= previous <= 0xDFFF and offset >= 4:
+            scalar = _identifier_scalar(data, offset - 4)
+            if scalar is not None:
+                previous = scalar[0]
+        if _is_player_identifier_codepoint(previous):
+            return False
     return True
 
 
@@ -190,12 +238,18 @@ def _candidate_name_pairs(frames: Sequence[BDOFrame]) -> list[_NamePair]:
     first = frames[0].message
     columns: list[tuple[int, tuple[str, ...]]] = []
     for offset in range(BDO_HEADER_SIZE, len(first) - 1):
-        if not _identifier_starts_here(first, offset):
+        if not _read_player_identifier(first, offset):
             continue
         values = tuple(
             _read_player_identifier(frame.message, offset) for frame in frames
         )
         if not all(values) or len(set(values)) != len(values):
+            continue
+        # A preceding binary word can coincidentally encode a supported Han
+        # character. Establish the column boundary using the whole response,
+        # rather than rejecting it solely on the first record's preceding word.
+        # A suffix of a genuine name has a supported predecessor in every row.
+        if not any(_identifier_starts_here(frame.message, offset) for frame in frames):
             continue
         columns.append((offset, values))
 
@@ -601,29 +655,40 @@ def _discover_menu_context(
     columns: list[tuple[int, tuple[str, ...]]] = []
     first = frames[0].message
     for offset in range(BDO_HEADER_SIZE, len(first) - 1):
-        # Most byte offsets cannot begin a UTF-16LE player identifier.  Reject
-        # those from the first frame before reading the same offset from all 24
-        # frames; this keeps menu-context probing cheap on unrelated traffic.
-        if not _identifier_starts_here(first, offset):
+        # Reject non-text offsets cheaply, then prove the column boundary
+        # across records so neighboring binary words cannot suppress it.
+        if not _read_player_identifier(first, offset):
             continue
         values = tuple(
             _read_player_identifier(frame.message, offset) for frame in frames
         )
         if not all(values) or len(set(values)) < 12:
             continue
+        if not any(_identifier_starts_here(frame.message, offset) for frame in frames):
+            continue
         columns.append((offset, values))
 
-    collapsed: list[tuple[int, tuple[str, ...]]] = []
-    for offset, values in columns:
-        if collapsed and offset - collapsed[-1][0] <= 64:
-            continue
-        collapsed.append((offset, values))
-    if len(collapsed) != 5:
+    groups: list[list[tuple[int, tuple[str, ...]]]] = []
+    for column in columns:
+        if not groups or column[0] - groups[-1][0][0] > 64:
+            groups.append([])
+        groups[-1].append(column)
+    if len(groups) != 5:
         return None
-    offsets = [offset for offset, _values in collapsed]
-    strides = [right - left for left, right in zip(offsets, offsets[1:])]
-    if len(set(strides)) != 1:
+    # Wider scripts can make a one-byte-shifted UTF-16 alias look like text.
+    # Select the unique evenly spaced five-column grid, not the first alias.
+    grids: list[tuple[int, ...]] = []
+    lookups = [dict(group) for group in groups]
+    for first_offset in lookups[0]:
+        for second_offset in lookups[1]:
+            stride = second_offset - first_offset
+            offsets = tuple(first_offset + index * stride for index in range(5))
+            if all(offset in group for offset, group in zip(offsets, lookups)):
+                grids.append(offsets)
+    if len(grids) != 1:
         return None
+    offsets = grids[0]
+    collapsed = [(offset, group[offset]) for offset, group in zip(offsets, lookups)]
     all_names = [name for _offset, values in collapsed for name in values]
     if not 40 <= len(set(all_names)) <= len(all_names):
         return None
@@ -634,7 +699,7 @@ def _discover_menu_context(
         frame_length=frame_length,
         frame_count=len(frames),
         player_slots_per_frame=len(collapsed),
-        record_stride=strides[0],
+        record_stride=offsets[1] - offsets[0],
         unique_names=len(set(all_names)),
         flow_generation=flow_generation,
     )
