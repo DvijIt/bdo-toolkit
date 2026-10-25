@@ -6,6 +6,19 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 No unreleased changes yet.
 
+## 1.0.15 - 2026-10-25
+
+This patch restores Solare player details when recent match histories contain draws.
+
+### Fixed
+
+- Parse Solare recent draws without losing player details. Accept the observed
+  signed recent-draw encoding while preserving original history text and integer
+  values. Discovery validates recent wins, draws, and losses separately against
+  lifetime counters, including complete histories of five or fewer matches.
+  This restores affected performance and equipment parsing while retaining
+  ambiguity and malformed-data checks.
+
 ## 1.0.14 - 2026-10-23
 
 This patch improves Thai Solare name handling and counter-layout discovery.
