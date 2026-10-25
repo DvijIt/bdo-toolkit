@@ -35,6 +35,8 @@ from ._details import (
     _OverallDetailLayout,
     _RichDetailLayout,
     _decode_history_region,
+    _history_outcome_counts,
+    _history_matches_outcomes,
     _decode_overall_aggregate_performance,
     _decode_performance_slots,
     _read_name,
@@ -693,10 +695,9 @@ def _history_outcome_candidates(
 ) -> tuple[tuple[int, int, int], ...]:
     """Constrain lifetime outcomes with complete or bounded recent histories.
 
-    For a zero-draw record, equal/unequal history pairs give observed wins and
-    losses. A longer lifetime record must contain at least those counts. Draw
-    encoding is not established, so nonzero-draw long histories provide no
-    positive orientation evidence. Ambiguous supported mappings stay unavailable.
+    Binary equal/unequal pairs give wins/losses; the observed (-1, 0) pair
+    gives draws. Complete short histories must match every lifetime component;
+    longer records must contain each recent count. Ambiguous mappings stay unavailable.
     """
     candidates: list[tuple[int, int, int]] = []
     for wins_offset, draws_offset, losses_offset in itertools.permutations(outcome_offsets):
@@ -712,27 +713,21 @@ def _history_outcome_candidates(
                 if decoded is None or len(decoded[1]) != 2 * min(matches, 5):
                     valid = False
                     break
-                codes = decoded[1]
-                equal = sum(codes[i] == codes[i + 1] for i in range(0, len(codes), 2))
-                unequal = len(codes) // 2 - equal
+                recent = _history_outcome_counts(decoded[1])
                 wins = _u32le(row, wins_offset + slot * 4)
                 draws = _u32le(row, draws_offset + slot * 4)
                 losses = _u32le(row, losses_offset + slot * 4)
-                if matches <= 5:
-                    if draws != 0 or wins != equal or losses != unequal:
-                        valid = False
-                        break
-                elif draws != 0:
-                    # A draw may occupy either pair category. These bounds
-                    # reject contradictions without assigning it an encoding.
-                    if wins + draws < equal or losses + draws < unequal:
-                        valid = False
-                        break
-                    continue
-                elif wins < equal or losses < unequal:
+                if recent is None or not _history_matches_outcomes(
+                    recent, matches, wins, draws, losses,
+                ):
                     valid = False
                     break
-                if equal != unequal:
+                if matches > 5 and draws and not recent[1]:
+                    # An older lifetime draw absent from this window constrains
+                    # candidates but does not positively identify the draw column.
+                    # Preserve the existing witness requirement for binary history.
+                    continue
+                if recent[0] != recent[2] or recent[1]:
                     discriminators += 1
             if not valid:
                 break

@@ -19,6 +19,44 @@ _HISTORY_SIZE = 0x65
 _FLOW = FlowKey("198.51.100.10", 8889, "192.0.2.25", 50000)
 
 
+@pytest.mark.parametrize('role', ('rich', 'overall'))
+@pytest.mark.parametrize('matches', (5, 81))
+@pytest.mark.parametrize('damage', (None, 'draw_as_loss', 'unknown_pair', 'odd_signed'))
+def test_registered_history_accepts_observed_draw_and_rejects_contradictions(role, matches, damage):
+    layout = _REPRESENTATIVE_LAYOUT
+    synthetic = _synthetic_snapshot(layout)
+    frames = synthetic.rich_frames if role == 'rich' else synthetic.overall_frames
+    prefix = '' if role == 'rich' else 'overall_'
+    message = bytearray(frames[0].message)
+    wins, draws, losses = (2,1,2) if matches == 5 else (43,1,37)
+    if damage == 'draw_as_loss':
+        draws, losses = 0, losses+1
+    for key,value in (('matches',matches),('wins',wins),('draws',draws),('losses',losses)):
+        _put_u32(message,getattr(layout,prefix+key),value)
+    wire = '0,1,1,0,1,1,1,1,-1,0'
+    if damage == 'unknown_pair': wire = wire[:-1] + '1'
+    if damage == 'odd_signed': wire += ',1'
+    _write_history(message,getattr(layout,prefix+'history'),wire)
+    changed = (replace(frames[0],message=bytes(message)), *frames[1:])
+    if role == 'rich':
+        decoded = decode_solare_details(changed,synthetic.rich)
+        if damage:
+            assert decoded is None
+            return
+        entries = decoded.players
+    else:
+        decoded = decode_solare_overall_details(changed,synthetic.overall)
+        assert decoded is not None and 'aggregate_performance' in decoded.capabilities
+        if damage:
+            assert 'performance' not in decoded.capabilities
+            return
+        entries = decoded.entries
+    performance = entries[0].classes_played[0]
+    assert performance.recent_results_wire_text == wire
+    assert performance.recent_results_raw[-2:] == (-1,0)
+    assert (performance.matches,performance.wins,performance.draws,performance.losses) == (matches,wins,draws,losses)
+
+
 @dataclass(frozen=True)
 class _Layout:
     layout_id: str

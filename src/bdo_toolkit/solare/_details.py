@@ -51,7 +51,11 @@ _GEAR_SLOT_SIZE = 0x7D1
 _ADDON_SLOT_SIZE = 0x1F5
 _MAX_PLAUSIBLE_MATCHES = 1_000_000
 _MAX_PLAUSIBLE_ELO = 1_000_000
-_HISTORY_PATTERN = re.compile(r"[01](?:,[01]){0,9}")
+# Preserve the registered reader's legacy opaque binary strings. Signed histories
+# must contain complete observed pairs; (-1, 0) is the UI-verified draw encoding.
+_HISTORY_PATTERN = re.compile(
+    r"(?:[01](?:,[01]){0,9}|(?:[01],[01]|-1,0)(?:,(?:[01],[01]|-1,0)){0,4})"
+)
 
 
 @dataclass(frozen=True)
@@ -322,6 +326,36 @@ def _specialization(class_code: int, code: int) -> SolareSpecialization:
     return SolareSpecialization(code=code, branch="succession", name="Succession")
 
 
+def _history_outcome_counts(codes: Sequence[int]) -> Optional[tuple[int, int, int]]:
+    """Count observed W/D/L pairs without assigning individual token meanings."""
+    if len(codes) % 2 or len(codes) > 10:
+        return None
+    wins = draws = losses = 0
+    for first, second in zip(codes[::2], codes[1::2]):
+        if (first, second) == (-1, 0):
+            draws += 1
+        elif first in (0, 1) and second in (0, 1):
+            if first == second:
+                wins += 1
+            else:
+                losses += 1
+        else:
+            return None
+    return wins, draws, losses
+
+
+def _history_matches_outcomes(
+    recent: tuple[int, int, int], matches: int, wins: int, draws: int, losses: int,
+) -> bool:
+    """A full short history is exact; a recent window gives component bounds."""
+    if sum(recent) != min(matches, 5):
+        return False
+    lifetime = (wins, draws, losses)
+    return recent == lifetime if matches <= 5 else all(
+        observed <= total for observed, total in zip(recent, lifetime)
+    )
+
+
 def _rich_layout_for(
     family: DiscoveredSolareFamily,
 ) -> Optional[_RichDetailLayout]:
@@ -514,6 +548,14 @@ def _decode_performance_slots(
             or not history_raw
         ):
             return None
+        if -1 in history_codes:
+            # Signed histories have observed pair semantics. Keep legacy binary
+            # registered decoding unchanged, but never publish a contradictory draw.
+            recent = _history_outcome_counts(history_codes)
+            if recent is None or not _history_matches_outcomes(
+                recent, slot_matches, slot_wins, slot_draws, slot_losses,
+            ):
+                return None
         occupied_codes.add(class_code)
 
         gear_loadout_raw: Optional[SolareRawSection] = None

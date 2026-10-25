@@ -54,6 +54,9 @@ _JULY_30_UNKNOWN_LAYOUT_CAPTURE = (
 _KR_OCTOBER_21_CAPTURE = optional_fixture_path(
     'solare--leaderboard-complete-kr-post-patch--9731c37014')
 
+_EU_RECENT_DRAW_CAPTURE = optional_fixture_path(
+    'solare--leaderboard-eu-recent-draw--030a695def')
+
 _LEARNED_CAPABILITIES = frozenset(
     {"rankings", "elo", "performance", "raw_extensions", "equipment"}
 )
@@ -66,6 +69,37 @@ _LEARNED_OVERALL_CAPABILITIES = (
 class _ReplayPair:
     registered: SolareCaptureResult
     learned: SolareCaptureResult
+
+
+def test_eu_recent_draw_capture_recovers_all_details():
+    if not _EU_RECENT_DRAW_CAPTURE.is_file():
+        pytest.skip('private EU recent-draw capture is not installed')
+    result = replay_solare(_EU_RECENT_DRAW_CAPTURE,retain_raw_extensions=True)
+    assert result.complete and result.evidence.health.capture_is_clean
+    assert result.evidence.exact_cross_check == 100
+    snapshot = result.snapshot
+    assert snapshot is not None and len(snapshot.players) == 640
+    assert len(snapshot.overall_top_100) == 100
+    assert _LEARNED_CAPABILITIES - {'raw_extensions'} <= snapshot.class_table_capabilities
+    assert _LEARNED_OVERALL_CAPABILITIES - {'raw_extensions'} <= snapshot.overall_capabilities
+    by_rank = {p.global_rank:p for p in snapshot.players}
+    recent = by_rank[513].classes_played[0]
+    assert by_rank[513].elo == 1424 and recent.player_class.code == 34
+    assert (recent.matches,recent.wins,recent.draws,recent.losses) == (81,43,1,37)
+    assert recent.recent_results_wire_text == '0,1,1,0,1,1,1,1,-1,0'
+    assert recent.recent_results_raw[-2:] == (-1,0)
+    older = by_rank[1034].classes_played[0]
+    assert (older.matches,older.wins,older.draws,older.losses) == (241,108,1,132)
+    assert -1 not in older.recent_results_raw
+    for player in (*snapshot.players,*snapshot.overall_top_100):
+        for slot in player.classes_played:
+            assert slot.record_is_balanced and slot.equipment is not None
+            assert len(slot.equipment) == 14
+    for overall in snapshot.overall_top_100:
+        rich = by_rank[overall.global_rank]
+        for left,right in zip(overall.classes_played,rich.classes_played):
+            assert (left.matches,left.wins,left.draws,left.losses,left.equipment) == (
+                right.matches,right.wins,right.draws,right.losses,right.equipment)
 
 
 def test_kr_capture_recovers_equivalent_zero_outcomes_and_direct_aggregates() -> None:
@@ -508,13 +542,8 @@ def test_historical_rediscovery_without_low_match_history(path):
         (baseline.snapshot.players, result.snapshot.players, result.snapshot.class_table_capabilities),
         (baseline.snapshot.overall_top_100, result.snapshot.overall_top_100, result.snapshot.overall_capabilities),
     ):
-        if path.name.startswith("leaderboard-agent--"):
-            # This season-start recording is genuinely ambiguous without its
-            # short histories. Preserve rankings, never invent outcome labels.
-            assert caps == frozenset({"rankings", "elo"})
-            assert [(p.name, p.global_rank) for p in after] == [(p.name, p.global_rank) for p in before]
-            assert all(not p.classes_played for p in after)
-            continue
+        # With observed draw-pair semantics, the season-start alternative that
+        # treated recent losses as lifetime draws is now contradicted too.
         assert "performance" in caps
         reference = {p.name: p for p in before}
         for player in after:
