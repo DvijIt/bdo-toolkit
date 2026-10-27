@@ -6,6 +6,18 @@ All notable released changes to `bdo-toolkit` are documented here.
 
 ### Added
 
+- Add experimental profile-free account decoders in `bdo_toolkit.account`.
+  `AccountDecoder` turns `RawMessage`s from `LiveRawSession` or `replay_raw`
+  into immutable records: the logged-in character (nick, family, class id,
+  fame), level and XP, the server's player list (nick, family, level, class
+  id), chat messages, family servants (horses, ships, camps) with equipped
+  gear and durability, and the worker list (type, level, stamina, town,
+  skills). Bundled messages are unwrapped, including bundles split across
+  consecutive messages of one connection; encrypted messages are skipped.
+  Opcodes and offsets were observed on EU in Oct 2026 and can be overridden
+  with `AccountOpcodes` after a patch. Id-to-name tables cover only ids
+  confirmed in game; others render as `<kind>#<id>`.
+
 - Add profile-based world position telemetry. Optional schema-1 `position`
   and `own_object` layouts support `LivePositionSession` and streaming
   `replay_position`, with immutable readings of every nearby moving object:
