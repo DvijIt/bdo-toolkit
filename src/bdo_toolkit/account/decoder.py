@@ -71,8 +71,8 @@ def _experience(at: float, b: bytes) -> Iterator[AccountRecord]:
 
 
 def _character_summary(at: float, b: bytes) -> Iterator[AccountRecord]:
-    if len(b) >= 104:
-        yield CharacterSummary(at, _u64(b, 76), _utf16(b, 4), _u32(b, 100))
+    if len(b) >= 84:
+        yield CharacterSummary(at, _u64(b, 76), _utf16(b, 4))
 
 
 def _player_list(at: float, b: bytes) -> Iterator[AccountRecord]:

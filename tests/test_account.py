@@ -96,7 +96,8 @@ def test_character_summary():
     put_text(b, 4, "Sefir")
     put(b, 76, 7, 8)
     put(b, 100, 61, 4)
-    assert AccountDecoder().feed(raw(OPS.character_summary, bytes(b))) == [CharacterSummary(10.0, 7, "Sefir", 61)]
+    # +100 held 61 after the character reached 62, so it is not reported as the level.
+    assert AccountDecoder().feed(raw(OPS.character_summary, bytes(b))) == [CharacterSummary(10.0, 7, "Sefir")]
 
 
 def test_player_list_requires_exact_record_count():

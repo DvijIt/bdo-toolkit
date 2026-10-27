@@ -9,7 +9,8 @@ All notable released changes to `bdo-toolkit` are documented here.
 - Add experimental profile-free account decoders in `bdo_toolkit.account`.
   `AccountDecoder` turns `RawMessage`s from `LiveRawSession` or `replay_raw`
   into immutable records: the logged-in character (nick, family, class id,
-  fame), level and XP, the server's player list (nick, family, level, class
+  fame), level and XP (the level comes only from XP messages; the short
+  character profile carries a value that lags it after a level-up), the server's player list (nick, family, level, class
   id), chat messages, family servants (horses, ships, camps) with equipped
   gear and durability, and the worker list (type, level, stamina, town,
   skills). Bundled messages are unwrapped, including bundles split across

@@ -73,12 +73,12 @@ class Experience(AccountRecord):
 
 @dataclass(frozen=True)
 class CharacterSummary(AccountRecord):
-    """Short profile of the logged-in character."""
+    """Short profile of the logged-in character. It carries a level-like value that lagged
+    the real level after a level-up, so the level comes only from ``Experience``."""
 
     record_type: ClassVar[str] = "character_summary"
     character_id: int
     nick: str
-    level: int
 
 
 @dataclass(frozen=True)
