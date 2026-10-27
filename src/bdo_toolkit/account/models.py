@@ -3,7 +3,9 @@ from dataclasses import asdict, dataclass, field
 from typing import ClassVar
 
 # Ids confirmed against the in-game UI (EU, Oct 2026); unknown ids render as "<kind>#<id>".
-CLASS_NAMES: dict[int, str] = {34: "Dosa"}
+CLASS_NAMES: dict[int, str] = {
+    2: "Ranger", 8: "Wukong", 13: "Corsair", 18: "Shai", 33: "Seraph", 34: "Dosa", 35: "Deadeye",
+}
 WORKER_TYPES: dict[int, str] = {
     7552: "Skilled Goblin Worker",
     7562: "Professional Goblin Worker",
@@ -41,7 +43,9 @@ class AccountRecord:
 
 @dataclass(frozen=True)
 class CharacterInfo(AccountRecord):
-    """The logged-in character, sent once on entering the world."""
+    """The logged-in character, sent once on entering the world. The fame fields are the
+    family's fame, shared by every character, not the character's own. ``slot`` is the
+    character's position on the character select screen, starting at 0."""
 
     record_type: ClassVar[str] = "character_info"
     character_id: int
@@ -51,6 +55,7 @@ class CharacterInfo(AccountRecord):
     fame_combat: int
     fame_life: int
     fame_third: int
+    slot: int = 0
 
     @property
     def class_name(self) -> str:

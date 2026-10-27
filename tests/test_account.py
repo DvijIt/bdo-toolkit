@@ -42,10 +42,11 @@ def experience_payload(level=61, xp=125_316_039, to_next=234_278_708):
     return bytes(b)
 
 
-def character_info_payload():
+def character_info_payload(class_id=34, slot=0):
     b = bytearray(7840)
     put(b, 13, 0x0000000000A11CE1, 8)
-    put(b, 21, 34, 4)
+    put(b, 21, class_id, 2)
+    put(b, 23, slot, 2)
     for at, fame in ((116, 2136), (120, 1669), (124, 901)):
         put(b, at, fame, 4)
     put_text(b, 6597, "Testfam")
@@ -63,6 +64,12 @@ def test_character_and_experience_are_unwrapped_from_a_bundle():
     ]
     assert records[0].class_name == "Dosa"
     assert round(records[1].percent, 3) == 53.490
+
+
+def test_class_and_slot_are_separate_fields():
+    # Mirel: Deadeye in the second slot arrived as 0x00010023 when read as one u32.
+    (info,) = AccountDecoder().feed(raw(OPS.character_info, character_info_payload(class_id=35, slot=1)))
+    assert (info.class_id, info.slot, info.class_name) == (35, 1, "Deadeye")
 
 
 def test_fragmented_bundle_completes_on_its_continuation():

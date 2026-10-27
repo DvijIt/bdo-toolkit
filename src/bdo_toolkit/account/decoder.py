@@ -63,8 +63,8 @@ def _utf16(b: bytes, at: int, max_bytes: int = NAME_BYTES) -> str:
 
 def _character_info(at: float, b: bytes) -> Iterator[AccountRecord]:
     if len(b) >= 7066 + 2:
-        yield CharacterInfo(at, _u64(b, 13), _utf16(b, 7066), _utf16(b, 6597), _u32(b, 21),
-                            _u32(b, 116), _u32(b, 120), _u32(b, 124))
+        yield CharacterInfo(at, _u64(b, 13), _utf16(b, 7066), _utf16(b, 6597), _u16(b, 21),
+                            _u32(b, 116), _u32(b, 120), _u32(b, 124), slot=_u16(b, 23))
 
 
 def _experience(at: float, b: bytes) -> Iterator[AccountRecord]:
