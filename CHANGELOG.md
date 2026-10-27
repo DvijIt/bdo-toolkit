@@ -44,6 +44,31 @@ All notable released changes to `bdo-toolkit` are documented here.
   the capture lacked. `update_position_profile` and `update_resource_profile`
   replace only their layouts, with a backup, an atomic write and an optional
   digest check.
+- Add profile-based combat telemetry. An optional schema-1 `combat` layout
+  supports `LiveCombatSession` and streaming `replay_combat`, with immutable
+  spawn, hit and kill events of objects near the player. Spawns pair each
+  object ID with its game data character key; hits carry attacker and target
+  IDs, skill number, damage, the target's HP after the hit, critical, back
+  and air attack, the target's position, and the target's character key when
+  its spawn was seen; kills carry victim, killer, character key and position.
+  Every nearby player's hits and kills are included. A spawn or kill the
+  server sends again is reported once per connection. Unexpected record list
+  shapes, non-finite or negative damage and HP, or non-finite positions fail
+  closed. Loot is not linked to kills.
+- Add combat layout relocation. `relocate_combat_replay` and
+  `relocate_combat_live` find the combat opcodes, record list shapes and
+  field offsets again after a patch from a short, clean capture of grinding.
+  Record list geometry comes from message lengths and the count byte. A field
+  is accepted only when its values pass a check that random bytes fail: a
+  target's HP falls by the damage, a kill names a lethal hit's target at that
+  moment, the killer is the lethal hit's attacker in most kills, the kill
+  happens where the hit landed, and spawned objects are hit or killed later
+  with the same character key. Hit ID, skill, critical and special attack
+  move with their nearest checked field and must still read sensibly. The
+  previous layout only breaks ties. No match, or two equally good messages,
+  fails with what the capture lacked.
+  `update_combat_profile` replaces only the combat layout, with a backup, an
+  atomic write and an optional digest check, and never writes on its own.
 
 ## 1.0.15 - 2026-10-25
 
