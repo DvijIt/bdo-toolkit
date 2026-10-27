@@ -67,6 +67,210 @@ def _xp_layout(value: object) -> XPProfileLayout | None:
 
 
 @dataclass(frozen=True)
+class PositionSource:
+    """One message that reports a nearby object's world position.
+
+    Offsets count from the start of the message, header included. x, y
+    (height), z are three consecutive f32 little endian in the game files'
+    centimetres; the object ID is a uint32 little endian. The optional
+    ``facing_offset`` names the facing direction: a unit vector of three f32
+    (x, y, z) with y 0.
+    """
+
+    opcode: int
+    message_length: int
+    position_offset: int
+    object_id_offset: int
+    facing_offset: int | None = None
+    flag: int = 0
+
+    def __post_init__(self) -> None:
+        for name, low, high in (("opcode", 0, 65535), ("message_length", 21, 4096),
+                                ("position_offset", 5, 4084), ("object_id_offset", 5, 4092),
+                                ("flag", 0, 0)):
+            _check_layout_int(self, "position.sources[]", name, low, high)
+        if self.facing_offset is not None:
+            _check_layout_int(self, "position.sources[]", "facing_offset", 5, 4084)
+        occupied: set[int] = set()
+        for offset, width in ((self.position_offset, 12), (self.object_id_offset, 4), (self.facing_offset, 12)):
+            if offset is None:
+                continue
+            positions = set(range(offset, offset + width))
+            if offset + width > self.message_length or occupied & positions:
+                raise ProfileError("position source fields overlap or extend outside the message")
+            occupied.update(positions)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"opcode": f"0x{self.opcode:04X}", "message_length": self.message_length,
+                "position_offset": self.position_offset, "object_id_offset": self.object_id_offset,
+                "facing_offset": self.facing_offset, "flag": self.flag}
+
+
+@dataclass(frozen=True)
+class PositionProfileLayout:
+    """The messages that report nearby objects' positions.
+
+    Every source is sent for every moving object near the player, not only
+    the player, and they complement each other: on client 3464 one reports
+    changes of movement, the other steady updates (also while walking
+    backwards, which the first leaves out).
+    """
+
+    sources: tuple[PositionSource, ...]
+    encoding: str = "xyz-f32le-object-u32le-v2"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sources, tuple) or not 1 <= len(self.sources) <= 16:
+            raise ProfileError("position.sources must be a tuple of 1 to 16 sources")
+        for source in self.sources:
+            if not isinstance(source, PositionSource):
+                raise ProfileError("position.sources must hold PositionSource values")
+            source.__post_init__()
+        if len({source.opcode for source in self.sources}) != len(self.sources):
+            raise ProfileError("position.sources must have distinct opcodes")
+        if self.encoding != "xyz-f32le-object-u32le-v2":
+            raise ProfileError("Unsupported position encoding")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"sources": [source.to_dict() for source in self.sources], "encoding": self.encoding}
+
+
+def _position_layout(value: object) -> PositionProfileLayout | None:
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or value.keys() != {"sources", "encoding"}
+            or not isinstance(value["sources"], list)):
+        raise ProfileError("position must contain exactly a sources list and an encoding")
+    keys = {"opcode", "message_length", "position_offset", "object_id_offset", "facing_offset", "flag"}
+    sources = []
+    for entry in value["sources"]:
+        if not isinstance(entry, dict) or entry.keys() != keys:
+            raise ProfileError("each position source must contain exactly the source fields")
+        sources.append(PositionSource(**{**entry, "opcode": _profile_opcode(entry["opcode"], "position.opcode")}))
+    return PositionProfileLayout(tuple(sources), value["encoding"])
+
+
+@dataclass(frozen=True)
+class OwnObjectSource:
+    """One message only the player receives about itself, and where it names the player.
+
+    The offset counts from the start of the message, header included; the
+    object ID is a uint32 little endian.
+    """
+
+    opcode: int
+    message_length: int
+    object_id_offset: int
+    flag: int = 0
+
+    def __post_init__(self) -> None:
+        for name, low, high in (("opcode", 0, 65535), ("message_length", 9, 4096),
+                                ("object_id_offset", 5, 4092), ("flag", 0, 0)):
+            _check_layout_int(self, "own_object.sources[]", name, low, high)
+        if self.object_id_offset + 4 > self.message_length:
+            raise ProfileError("own_object source object ID extends outside the message")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"opcode": f"0x{self.opcode:04X}", "message_length": self.message_length,
+                "object_id_offset": self.object_id_offset, "flag": self.flag}
+
+
+@dataclass(frozen=True)
+class OwnObjectProfileLayout:
+    """Messages that reveal the player's object ID, which is new on every login."""
+
+    sources: tuple[OwnObjectSource, ...]
+    encoding: str = "object-u32le-v1"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sources, tuple) or not 1 <= len(self.sources) <= 16:
+            raise ProfileError("own_object.sources must be a tuple of 1 to 16 sources")
+        for source in self.sources:
+            if not isinstance(source, OwnObjectSource):
+                raise ProfileError("own_object.sources must hold OwnObjectSource values")
+            source.__post_init__()
+        if len({source.opcode for source in self.sources}) != len(self.sources):
+            raise ProfileError("own_object.sources must have distinct opcodes")
+        if self.encoding != "object-u32le-v1":
+            raise ProfileError("Unsupported own_object encoding")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"sources": [source.to_dict() for source in self.sources], "encoding": self.encoding}
+
+
+def _own_object_layout(value: object) -> OwnObjectProfileLayout | None:
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or value.keys() != {"sources", "encoding"}
+            or not isinstance(value["sources"], list)):
+        raise ProfileError("own_object must contain exactly a sources list and an encoding")
+    keys = {"opcode", "message_length", "object_id_offset", "flag"}
+    sources = []
+    for entry in value["sources"]:
+        if not isinstance(entry, dict) or entry.keys() != keys:
+            raise ProfileError("each own_object source must contain exactly the source fields")
+        sources.append(OwnObjectSource(**{**entry, "opcode": _profile_opcode(entry["opcode"], "own_object.opcode")}))
+    return OwnObjectProfileLayout(tuple(sources), value["encoding"])
+
+
+@dataclass(frozen=True)
+class ResourceProfileLayout:
+    """Class resource change geometry: max, signed change, object ID, current.
+
+    The resource is MP or the class's own kind; one message serves every class.
+
+    Offsets count from the start of the message, header included; all four
+    fields are 32-bit little endian, the change signed. The server sends it
+    for the player and for nearby mounts (another stat, same shape).
+    """
+
+    opcode: int
+    message_length: int
+    maximum_offset: int
+    change_offset: int
+    object_id_offset: int
+    current_offset: int
+    flag: int = 0
+    encoding: str = "resource-u32le-change-i32le-v1"
+
+    def __post_init__(self) -> None:
+        for name, low, high in (("opcode", 0, 65535), ("message_length", 21, 4096),
+                                ("maximum_offset", 5, 4092), ("change_offset", 5, 4092),
+                                ("object_id_offset", 5, 4092), ("current_offset", 5, 4092), ("flag", 0, 0)):
+            _check_layout_int(self, "resource", name, low, high)
+        if self.encoding != "resource-u32le-change-i32le-v1":
+            raise ProfileError("Unsupported resource encoding")
+        occupied: set[int] = set()
+        for offset in (self.maximum_offset, self.change_offset, self.object_id_offset, self.current_offset):
+            positions = set(range(offset, offset + 4))
+            if offset + 4 > self.message_length or occupied & positions:
+                raise ProfileError("resource fields overlap or extend outside the message")
+            occupied.update(positions)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"opcode": f"0x{self.opcode:04X}", "message_length": self.message_length,
+                "maximum_offset": self.maximum_offset, "change_offset": self.change_offset,
+                "object_id_offset": self.object_id_offset, "current_offset": self.current_offset,
+                "flag": self.flag, "encoding": self.encoding}
+
+
+def _resource_layout(value: object) -> ResourceProfileLayout | None:
+    if value is None:
+        return None
+    keys = {"opcode", "message_length", "maximum_offset", "change_offset", "object_id_offset",
+            "current_offset", "flag", "encoding"}
+    if not isinstance(value, dict) or value.keys() != keys:
+        raise ProfileError("resource must contain exactly the resource layout fields")
+    return ResourceProfileLayout(**{**value, "opcode": _profile_opcode(value["opcode"], "resource.opcode")})
+
+
+def _check_layout_int(layout: object, section: str, name: str, low: int, high: int) -> None:
+    value = getattr(layout, name)
+    if type(value) is not int or not low <= value <= high:
+        raise ProfileError(f"{section}.{name} must be an integer from {low} to {high}")
+
+
+@dataclass(frozen=True)
 class AgrisProfileLayout:
     """Portable Agris geometry; no player balance or connection identity."""
 
@@ -165,12 +369,22 @@ class OpcodeProfile:
     origin_companion_families: tuple[OriginCompanionFamily, ...] = ()
     agris: AgrisProfileLayout | None = field(default=None, kw_only=True)
     xp: XPProfileLayout | None = field(default=None, kw_only=True)
+    position: PositionProfileLayout | None = field(default=None, kw_only=True)
+    own_object: OwnObjectProfileLayout | None = field(default=None, kw_only=True)
+    resource: ResourceProfileLayout | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.xp is not None:
             if not isinstance(self.xp, XPProfileLayout):
                 raise ProfileError("xp must be an XPProfileLayout or None")
             self.xp.__post_init__()
+        for name, layout_type in (("position", PositionProfileLayout), ("own_object", OwnObjectProfileLayout),
+                                  ("resource", ResourceProfileLayout)):
+            layout = getattr(self, name)
+            if layout is not None:
+                if not isinstance(layout, layout_type):
+                    raise ProfileError(f"{name} must be a {layout_type.__name__} or None")
+                layout.__post_init__()
         if self.agris is not None:
             if not isinstance(self.agris, AgrisProfileLayout):
                 raise ProfileError("agris must be an AgrisProfileLayout or None")
@@ -204,6 +418,9 @@ class OpcodeProfile:
             ],
             **({"agris": self.agris.to_dict()} if self.agris is not None else {}),
             **({"xp": self.xp.to_dict()} if self.xp is not None else {}),
+            **({"position": self.position.to_dict()} if self.position is not None else {}),
+            **({"own_object": self.own_object.to_dict()} if self.own_object is not None else {}),
+            **({"resource": self.resource.to_dict()} if self.resource is not None else {}),
         }
 
 
@@ -301,6 +518,9 @@ def _opcode_profile_from_data(data: Any, profile_path: Path) -> OpcodeProfile:
         origin_companion_families=families,
         agris=_agris_layout(data.get("agris")),
         xp=_xp_layout(data.get("xp")),
+        position=_position_layout(data.get("position")),
+        own_object=_own_object_layout(data.get("own_object")),
+        resource=_resource_layout(data.get("resource")),
     )
 
 
