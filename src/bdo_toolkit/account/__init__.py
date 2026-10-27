@@ -1,4 +1,4 @@
-"""Experimental profile-free account data: own character, XP, players, chat, servants, workers.
+"""Experimental profile-free account data: own character, XP, players, chat, servants, workers, knowledge.
 
 Decoded from raw server messages (``bdo_toolkit.raw``) by fixed opcodes and offsets observed on
 EU in Oct 2026; a patch can renumber opcodes (see ``AccountOpcodes``). Combine with
@@ -12,9 +12,9 @@ EU in Oct 2026; a patch can renumber opcodes (see ``AccountOpcodes``). Combine w
 from .decoder import AccountDecoder, AccountOpcodes, bundle_entries
 from .models import (CHAT_CHANNELS, CLASS_NAMES, SERVANT_CATEGORIES, TOWNS, WORKER_SKILLS, WORKER_TYPES,
                      AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, Experience, GearItem,
-                     PlayerSighting, Servant, Worker)
+                     KnowledgeBatch, KnowledgeEntry, PlayerSighting, Servant, Worker)
 
 __all__ = ["AccountDecoder", "AccountOpcodes", "AccountRecord", "CHAT_CHANNELS", "CLASS_NAMES",
-           "CharacterInfo", "CharacterSummary", "ChatMessage", "Experience", "GearItem", "PlayerSighting",
-           "SERVANT_CATEGORIES", "Servant", "TOWNS", "WORKER_SKILLS", "WORKER_TYPES", "Worker",
-           "bundle_entries"]
+           "CharacterInfo", "CharacterSummary", "ChatMessage", "Experience", "GearItem", "KnowledgeBatch",
+           "KnowledgeEntry", "PlayerSighting", "SERVANT_CATEGORIES", "Servant", "TOWNS", "WORKER_SKILLS",
+           "WORKER_TYPES", "Worker", "bundle_entries"]

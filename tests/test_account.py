@@ -2,7 +2,8 @@
 import json
 
 from bdo_toolkit.account import (AccountDecoder, AccountOpcodes, CharacterInfo, CharacterSummary, ChatMessage,
-                                 Experience, GearItem, PlayerSighting, Servant, Worker)
+                                 Experience, GearItem, KnowledgeBatch, KnowledgeEntry, PlayerSighting, Servant,
+                                 Worker)
 from bdo_toolkit.events import Flow
 from bdo_toolkit.raw import RawMessage
 
@@ -158,6 +159,22 @@ def test_worker_list():
     assert (worker.type_name, worker.town_name) == ("Professional Goblin Worker", "Keplan")
     assert worker.skill_names == ("Ore Packing", "Lucky Guy A", "Thrifty A")
     assert Worker(1.0, 1, 1, 1, 1, 9999).town_name == "town#9999"
+
+
+def knowledge_payload(points, entries):
+    body = b"".join(kid.to_bytes(4, "little") + bytes([level]) + b"\x00\x00\x00\x6c" for kid, level in entries)
+    return points.to_bytes(4, "little") + len(entries).to_bytes(2, "little") + body
+
+
+def test_knowledge_batch():
+    payload = knowledge_payload(2596, [(1, 1), (2, 5), (15054, 3)])
+    (batch,) = AccountDecoder().feed(raw(OPS.knowledge, payload))
+    assert batch == KnowledgeBatch(10.0, 2596, (KnowledgeEntry(1, 1), KnowledgeEntry(2, 5), KnowledgeEntry(15054, 3)))
+
+
+def test_knowledge_batch_with_a_wrong_count_is_skipped():
+    payload = knowledge_payload(2596, [(1, 1), (2, 5)])
+    assert AccountDecoder().feed(raw(OPS.knowledge, payload + b"\x00")) == []
 
 
 def test_custom_opcodes_after_a_patch():

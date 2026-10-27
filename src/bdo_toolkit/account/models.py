@@ -139,6 +139,27 @@ class Servant(AccountRecord):
 
 
 @dataclass(frozen=True)
+class KnowledgeEntry:
+    """One gained knowledge. ``level`` is 1–5, probably grades C…SS (unconfirmed); knowledge
+    without a grade reports 1."""
+
+    knowledge_id: int
+    level: int
+
+
+@dataclass(frozen=True)
+class KnowledgeBatch(AccountRecord):
+    """Part of the family knowledge book, sent on entering the world in several messages.
+
+    The batches together list every gained knowledge; ``ecology_points`` repeats in each.
+    """
+
+    record_type: ClassVar[str] = "knowledge_batch"
+    ecology_points: int
+    entries: tuple[KnowledgeEntry, ...] = field(default=())
+
+
+@dataclass(frozen=True)
 class Worker(AccountRecord):
     """One worker. Work speed, movement speed and luck are computed by the client and not sent."""
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from ..raw import RawMessage
 from .models import (AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, Experience, GearItem,
-                     PlayerSighting, Servant, Worker)
+                     KnowledgeBatch, KnowledgeEntry, PlayerSighting, Servant, Worker)
 
 ENCRYPTED_FLAG = 1
 
@@ -21,6 +21,7 @@ KIND_COMPLETE, KIND_FIRST, KIND_CONTINUATION = 4, 1, 3
 PLAYER_RECORD, PLAYER_LIST_HEADER = 270, 7
 WORKER_RECORD, WORKER_LIST_HEADER, WORKER_SKILL_SLOTS = 62, 9, 9
 GEAR_START, GEAR_SLOT, GEAR_SLOTS = 157, 221, 20
+KNOWLEDGE_RECORD, KNOWLEDGE_HEADER = 9, 6
 NAME_BYTES = 62
 
 
@@ -36,6 +37,7 @@ class AccountOpcodes:
     chat: int = 0x1978
     servant: int = 0x1B1D
     worker_list: int = 0x19DE
+    knowledge: int = 0x0DB6
 
 
 def _u16(b: bytes, at: int) -> int:
@@ -120,6 +122,18 @@ def _worker_list(at: float, b: bytes) -> Iterator[AccountRecord]:
                      town_id=_u32(r, 14), skills=skills)
 
 
+def _knowledge(at: float, b: bytes) -> Iterator[AccountRecord]:
+    # u32 ecology points · u16 count · count × (u32 id · u8 level · 4 bytes unknown).
+    count = _u16(b, 4)
+    if len(b) != KNOWLEDGE_HEADER + count * KNOWLEDGE_RECORD:
+        return
+    entries = tuple(
+        KnowledgeEntry(_u32(b, a), b[a + 4])
+        for a in range(KNOWLEDGE_HEADER, len(b), KNOWLEDGE_RECORD)
+    )
+    yield KnowledgeBatch(at, _u32(b, 0), entries)
+
+
 def bundle_entries(body: bytes, count: int) -> Iterator[tuple[int, bytes]]:
     """Inner messages of a bundle body: u16 size (opcode + data) · u16 opcode · data."""
     off = 0
@@ -144,7 +158,7 @@ class AccountDecoder:
         self._decoders: dict[int, Callable[[float, bytes], Iterator[AccountRecord]]] = {
             o.character_info: _character_info, o.experience: _experience,
             o.character_summary: _character_summary, o.player_list: _player_list, o.chat: _chat,
-            o.servant: _servant, o.worker_list: _worker_list,
+            o.servant: _servant, o.worker_list: _worker_list, o.knowledge: _knowledge,
         }
         self._pending: bytearray | None = None
         self._pending_count = 0
