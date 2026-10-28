@@ -8,9 +8,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from ..raw import RawMessage
-from .models import (AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, Contribution, Experience,
-                     GearItem, KnowledgeBatch, KnowledgeEntry, NodeBatch, NodeState, PlayerSighting, Servant,
-                     SkillPoints, Worker)
+from .models import (AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, CompletedQuests, Contribution,
+                     Experience, GearItem, KnowledgeBatch, KnowledgeEntry, NodeBatch, NodeState, OpenQuests,
+                     PlayerSighting, QuestKey, Servant, SkillPoints, Worker)
 
 ENCRYPTED_FLAG = 1
 
@@ -25,6 +25,9 @@ GEAR_START, GEAR_SLOT, GEAR_SLOTS = 157, 221, 20
 KNOWLEDGE_RECORD, KNOWLEDGE_HEADER = 9, 6
 NODE_RECORD, NODE_HEADER, NODE_INVESTED = 21, 6, 13
 CONTRIBUTION_SIZE, SKILL_POINTS_SIZE = 16, 12
+# (record size, header size, offset of the u16 count, offset of the key in a record)
+COMPLETED_QUESTS = (19, 3, 0, 15)
+OPEN_QUESTS = (41, 12, 3, 4)
 NAME_BYTES = 62
 
 
@@ -44,6 +47,8 @@ class AccountOpcodes:
     contribution: int = 0x118D
     skill_points: int = 0x0D0E
     node_list: int = 0x0FA2
+    completed_quests: int = 0x0CDA
+    open_quests: int = 0x0C5A
 
 
 def _u16(b: bytes, at: int) -> int:
@@ -163,6 +168,26 @@ def _node_list(at: float, b: bytes) -> Iterator[AccountRecord]:
     yield NodeBatch(at, nodes)
 
 
+def _quest_keys(b: bytes, layout: tuple[int, int, int, int]) -> tuple[QuestKey, ...] | None:
+    record, header, count_at, key_at = layout
+    count = _u16(b, count_at)
+    if len(b) != header + count * record:
+        return None
+    return tuple(QuestKey(_u16(b, a + key_at), _u16(b, a + key_at + 2)) for a in range(header, len(b), record))
+
+
+def _completed_quests(at: float, b: bytes) -> Iterator[AccountRecord]:
+    quests = _quest_keys(b, COMPLETED_QUESTS)
+    if quests is not None:
+        yield CompletedQuests(at, quests)
+
+
+def _open_quests(at: float, b: bytes) -> Iterator[AccountRecord]:
+    quests = _quest_keys(b, OPEN_QUESTS)
+    if quests is not None:
+        yield OpenQuests(at, quests)
+
+
 def bundle_entries(body: bytes, count: int) -> Iterator[tuple[int, bytes]]:
     """Inner messages of a bundle body: u16 size (opcode + data) · u16 opcode · data."""
     off = 0
@@ -189,6 +214,7 @@ class AccountDecoder:
             o.character_summary: _character_summary, o.player_list: _player_list, o.chat: _chat,
             o.servant: _servant, o.worker_list: _worker_list, o.knowledge: _knowledge,
             o.contribution: _contribution, o.skill_points: _skill_points, o.node_list: _node_list,
+            o.completed_quests: _completed_quests, o.open_quests: _open_quests,
         }
         self._pending: bytearray | None = None
         self._pending_count = 0

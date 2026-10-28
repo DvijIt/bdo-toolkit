@@ -16,8 +16,10 @@ All notable released changes to `bdo-toolkit` are documented here.
   skills), the knowledge book (every gained knowledge id with a 1–5
   level, plus ecology knowledge points), family contribution points
   (available, total and progress to the next point), the logged-in
-  character's skill points, and the node list with the nodes contribution
-  points are invested in. Bundled messages are unwrapped, including bundles split across
+  character's skill points, the node list with the nodes contribution
+  points are invested in, and the logged-in character's quest lists
+  (completed quests, which are not every completed quest, and a list
+  that is probably unlocked but unfinished quests). Bundled messages are unwrapped, including bundles split across
   consecutive messages of one connection; encrypted messages are skipped.
   Opcodes and offsets were observed on EU in Oct 2026 and can be overridden
   with `AccountOpcodes` after a patch. Id-to-name tables cover only ids

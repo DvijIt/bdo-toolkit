@@ -2,8 +2,9 @@
 import json
 
 from bdo_toolkit.account import (AccountDecoder, AccountOpcodes, CharacterInfo, CharacterSummary, ChatMessage,
-                                 Contribution, Experience, GearItem, KnowledgeBatch, KnowledgeEntry, NodeBatch,
-                                 NodeState, PlayerSighting, Servant, SkillPoints, Worker)
+                                 CompletedQuests, Contribution, Experience, GearItem, KnowledgeBatch, KnowledgeEntry,
+                                 NodeBatch, NodeState, OpenQuests, PlayerSighting, QuestKey, Servant, SkillPoints,
+                                 Worker)
 from bdo_toolkit.events import Flow
 from bdo_toolkit.raw import RawMessage
 
@@ -237,3 +238,24 @@ def test_node_list_marks_invested_nodes():
     assert record == NodeBatch(10.0, (NodeState(1, True), NodeState(1509, False), NodeState(301, True)))
     assert record.invested == (1, 301)
     assert AccountDecoder().feed(raw(OPS.node_list, payload[:-1])) == []
+
+
+def quest_payload(keys, record, header, count_at, key_at):
+    b = bytearray(header + record * len(keys))
+    put(b, count_at, len(keys), 2)
+    for i, (group, index) in enumerate(keys):
+        a = header + record * i
+        b[a:a + key_at] = bytes(range(1, key_at + 1))  # змінні байти перед ключем
+        put(b, a + key_at, group, 2)
+        put(b, a + key_at + 2, index, 2)
+    return bytes(b)
+
+
+def test_completed_and_open_quests():
+    done = quest_payload([(40022, 14), (748, 1)], 19, 3, 0, 15)
+    (record,) = AccountDecoder().feed(raw(OPS.completed_quests, done))
+    assert record == CompletedQuests(10.0, (QuestKey(40022, 14), QuestKey(748, 1)))
+    open_ = quest_payload([(6814, 1)], 41, 12, 3, 4)
+    (record,) = AccountDecoder().feed(raw(OPS.open_quests, open_))
+    assert record == OpenQuests(10.0, (QuestKey(6814, 1),))
+    assert AccountDecoder().feed(raw(OPS.completed_quests, done[:-1])) == []

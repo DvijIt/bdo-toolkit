@@ -231,3 +231,31 @@ class NodeBatch(AccountRecord):
     @property
     def invested(self) -> tuple[int, ...]:
         return tuple(n.node_id for n in self.nodes if n.invested)
+
+
+@dataclass(frozen=True)
+class QuestKey:
+    """A quest as the client keys it: ``group`` and ``index`` ("40022-14")."""
+
+    group: int
+    index: int
+
+
+@dataclass(frozen=True)
+class CompletedQuests(AccountRecord):
+    """Part of the completed-quest list of the logged-in character, sent in several
+    messages on entering the world. It holds family quests too, but not every completed
+    quest: the in-game counter is higher than the union over all characters."""
+
+    record_type: ClassVar[str] = "completed_quests"
+    quests: tuple[QuestKey, ...] = field(default=())
+
+
+@dataclass(frozen=True)
+class OpenQuests(AccountRecord):
+    """Part of a quest list of the logged-in character with no overlap with the completed
+    ones; a handed-in quest leaves it. Probably quests that are unlocked but not done
+    (unconfirmed), sent in several messages on entering the world."""
+
+    record_type: ClassVar[str] = "open_quests"
+    quests: tuple[QuestKey, ...] = field(default=())
