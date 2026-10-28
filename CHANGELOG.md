@@ -13,8 +13,11 @@ All notable released changes to `bdo-toolkit` are documented here.
   character profile carries a value that lags it after a level-up), the server's player list (nick, family, level, class
   id), chat messages, family servants (horses, ships, camps) with equipped
   gear and durability, the worker list (type, level, stamina, town,
-  skills), and the knowledge book (every gained knowledge id with a 1–5
-  level, plus ecology knowledge points). Bundled messages are unwrapped, including bundles split across
+  skills), the knowledge book (every gained knowledge id with a 1–5
+  level, plus ecology knowledge points), family contribution points
+  (available, total and progress to the next point), the logged-in
+  character's skill points, and the node list with the nodes contribution
+  points are invested in. Bundled messages are unwrapped, including bundles split across
   consecutive messages of one connection; encrypted messages are skipped.
   Opcodes and offsets were observed on EU in Oct 2026 and can be overridden
   with `AccountOpcodes` after a patch. Id-to-name tables cover only ids

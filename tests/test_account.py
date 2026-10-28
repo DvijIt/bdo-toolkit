@@ -2,8 +2,8 @@
 import json
 
 from bdo_toolkit.account import (AccountDecoder, AccountOpcodes, CharacterInfo, CharacterSummary, ChatMessage,
-                                 Experience, GearItem, KnowledgeBatch, KnowledgeEntry, PlayerSighting, Servant,
-                                 Worker)
+                                 Contribution, Experience, GearItem, KnowledgeBatch, KnowledgeEntry, NodeBatch,
+                                 NodeState, PlayerSighting, Servant, SkillPoints, Worker)
 from bdo_toolkit.events import Flow
 from bdo_toolkit.raw import RawMessage
 
@@ -195,3 +195,45 @@ def test_records_serialize_to_json():
     assert json.loads(json.dumps(record.to_dict())) == {
         "schema_version": 1, "record_type": "worker", "observed_at": 1.0, "worker_id": 2, "type_id": 7552,
         "level": 1, "stamina": 8, "town_id": 608, "skills": [1010]}
+
+
+def test_contribution_points():
+    b = bytearray(16)
+    put(b, 0, 0x5B60, 2)
+    put(b, 2, 3_699, 8)
+    put(b, 10, 195, 2)
+    put(b, 14, 411, 2)
+    (record,) = AccountDecoder().feed(raw(OPS.contribution, bytes(b)))
+    assert record == Contribution(10.0, available=195, total=411, experience=3_699)
+    assert AccountDecoder().feed(raw(OPS.contribution, bytes(b) + b"\x00")) == []
+
+
+def test_skill_points():
+    b = bytearray(12)
+    put(b, 0, 0xDEC5B18F, 4)
+    put(b, 4, 11, 2)
+    put(b, 6, 183, 2)
+    put(b, 8, 1892, 2)
+    put(b, 10, 797, 2)
+    (record,) = AccountDecoder().feed(raw(OPS.skill_points, bytes(b)))
+    assert record == SkillPoints(10.0, available=183, total=1892)
+
+
+def node_list_payload(nodes):
+    b = bytearray(6 + 21 * len(nodes))
+    put(b, 0, len(nodes), 2)
+    for i, (node_id, invested) in enumerate(nodes):
+        a = 6 + 21 * i
+        put(b, a, node_id, 4)
+        put(b, a + 4, 117, 4)
+        b[a + 13] = int(invested)
+        b[a + 14] = 1
+    return bytes(b)
+
+
+def test_node_list_marks_invested_nodes():
+    payload = node_list_payload([(1, True), (1509, False), (301, True)])
+    (record,) = AccountDecoder().feed(raw(OPS.node_list, payload))
+    assert record == NodeBatch(10.0, (NodeState(1, True), NodeState(1509, False), NodeState(301, True)))
+    assert record.invested == (1, 301)
+    assert AccountDecoder().feed(raw(OPS.node_list, payload[:-1])) == []

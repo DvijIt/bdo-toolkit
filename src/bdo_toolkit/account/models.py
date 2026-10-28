@@ -145,8 +145,8 @@ class Servant(AccountRecord):
 
 @dataclass(frozen=True)
 class KnowledgeEntry:
-    """One gained knowledge. ``level`` is 1–5, probably grades C…SS (unconfirmed); knowledge
-    without a grade reports 1."""
+    """One gained knowledge. ``level`` grades confirmed in game: 1 C, 2 B, 3 A, 5 S (4 is
+    unconfirmed); knowledge without a grade reports 1."""
 
     knowledge_id: int
     level: int
@@ -187,3 +187,47 @@ class Worker(AccountRecord):
     @property
     def skill_names(self) -> tuple[str, ...]:
         return tuple(_name(WORKER_SKILLS, "skill", s) for s in self.skills)
+
+
+@dataclass(frozen=True)
+class Contribution(AccountRecord):
+    """Family contribution points, sent on entering the world: ``available`` of ``total``
+    are free to invest (the in-game "195/411"). ``experience`` grows towards the next point
+    and restarts when one is gained."""
+
+    record_type: ClassVar[str] = "contribution"
+    available: int
+    total: int
+    experience: int
+
+
+@dataclass(frozen=True)
+class SkillPoints(AccountRecord):
+    """Skill points of the logged-in character, sent with combat XP: ``available`` of
+    ``total`` (the in-game "183/1892")."""
+
+    record_type: ClassVar[str] = "skill_points"
+    available: int
+    total: int
+
+
+@dataclass(frozen=True)
+class NodeState:
+    """One node (waypoint key, as in worker towns); ``invested`` means contribution points
+    are invested in it."""
+
+    node_id: int
+    invested: bool
+
+
+@dataclass(frozen=True)
+class NodeBatch(AccountRecord):
+    """Part of the family node list, sent on entering the world in two messages that
+    together cover every node."""
+
+    record_type: ClassVar[str] = "node_batch"
+    nodes: tuple[NodeState, ...] = field(default=())
+
+    @property
+    def invested(self) -> tuple[int, ...]:
+        return tuple(n.node_id for n in self.nodes if n.invested)

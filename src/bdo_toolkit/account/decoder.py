@@ -8,8 +8,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from ..raw import RawMessage
-from .models import (AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, Experience, GearItem,
-                     KnowledgeBatch, KnowledgeEntry, PlayerSighting, Servant, Worker)
+from .models import (AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, Contribution, Experience,
+                     GearItem, KnowledgeBatch, KnowledgeEntry, NodeBatch, NodeState, PlayerSighting, Servant,
+                     SkillPoints, Worker)
 
 ENCRYPTED_FLAG = 1
 
@@ -22,6 +23,8 @@ PLAYER_RECORD, PLAYER_LIST_HEADER = 270, 7
 WORKER_RECORD, WORKER_LIST_HEADER, WORKER_SKILL_SLOTS = 62, 9, 9
 GEAR_START, GEAR_SLOT, GEAR_SLOTS = 157, 221, 20
 KNOWLEDGE_RECORD, KNOWLEDGE_HEADER = 9, 6
+NODE_RECORD, NODE_HEADER, NODE_INVESTED = 21, 6, 13
+CONTRIBUTION_SIZE, SKILL_POINTS_SIZE = 16, 12
 NAME_BYTES = 62
 
 
@@ -38,6 +41,9 @@ class AccountOpcodes:
     servant: int = 0x1B1D
     worker_list: int = 0x19DE
     knowledge: int = 0x0DB6
+    contribution: int = 0x118D
+    skill_points: int = 0x0D0E
+    node_list: int = 0x0FA2
 
 
 def _u16(b: bytes, at: int) -> int:
@@ -134,6 +140,29 @@ def _knowledge(at: float, b: bytes) -> Iterator[AccountRecord]:
     yield KnowledgeBatch(at, _u32(b, 0), entries)
 
 
+def _contribution(at: float, b: bytes) -> Iterator[AccountRecord]:
+    # u16 · u64 experience · u16 available · u16 · u16 total; 194/410 → 195/411 seen restart experience.
+    if len(b) == CONTRIBUTION_SIZE:
+        yield Contribution(at, available=_u16(b, 10), total=_u16(b, 14), experience=_u64(b, 2))
+
+
+def _skill_points(at: float, b: bytes) -> Iterator[AccountRecord]:
+    if len(b) == SKILL_POINTS_SIZE:
+        yield SkillPoints(at, available=_u16(b, 6), total=_u16(b, 8))
+
+
+def _node_list(at: float, b: bytes) -> Iterator[AccountRecord]:
+    # u16 count · 4 bytes · count × (u32 node · … · u8 invested at +13 · …).
+    count = _u16(b, 0)
+    if len(b) != NODE_HEADER + count * NODE_RECORD:
+        return
+    nodes = tuple(
+        NodeState(_u32(b, a), b[a + NODE_INVESTED] == 1)
+        for a in range(NODE_HEADER, len(b), NODE_RECORD)
+    )
+    yield NodeBatch(at, nodes)
+
+
 def bundle_entries(body: bytes, count: int) -> Iterator[tuple[int, bytes]]:
     """Inner messages of a bundle body: u16 size (opcode + data) · u16 opcode · data."""
     off = 0
@@ -159,6 +188,7 @@ class AccountDecoder:
             o.character_info: _character_info, o.experience: _experience,
             o.character_summary: _character_summary, o.player_list: _player_list, o.chat: _chat,
             o.servant: _servant, o.worker_list: _worker_list, o.knowledge: _knowledge,
+            o.contribution: _contribution, o.skill_points: _skill_points, o.node_list: _node_list,
         }
         self._pending: bytearray | None = None
         self._pending_count = 0
