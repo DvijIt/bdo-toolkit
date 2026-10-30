@@ -1,5 +1,5 @@
-"""Experimental profile-free account data: own character, XP, players, chat, servants, workers, knowledge,
-contribution points, skill points, invested nodes and quest lists.
+"""Experimental profile-free account data: own character, its equipped gear, family life skill gear, XP,
+players, chat, servants, workers, knowledge, contribution points, skill points, invested nodes and quest lists.
 
 Decoded from raw server messages (``bdo_toolkit.raw``) by fixed opcodes and offsets observed on
 EU in Oct 2026; a patch can renumber opcodes (see ``AccountOpcodes``). Combine with
@@ -11,13 +11,15 @@ EU in Oct 2026; a patch can renumber opcodes (see ``AccountOpcodes``). Combine w
             ...
 """
 from .decoder import AccountDecoder, AccountOpcodes, bundle_entries
-from .models import (CHAT_CHANNELS, CLASS_NAMES, SERVANT_CATEGORIES, TOWNS, WORKER_SKILLS, WORKER_TYPES,
-                     AccountRecord, CharacterInfo, CharacterSummary, ChatMessage, CompletedQuests, Contribution,
-                     Experience, GearItem, KnowledgeBatch, KnowledgeEntry, NodeBatch, NodeState, OpenQuests,
-                     PlayerSighting, QuestKey, Servant, SkillPoints, Worker)
+from .models import (CHAT_CHANNELS, CLASS_NAMES, EQUIPMENT_SLOTS, LIFE_EQUIPMENT_SLOTS, SERVANT_CATEGORIES, TOWNS,
+                     WORKER_SKILLS, WORKER_TYPES, AccountRecord, CharacterInfo, CharacterSummary, ChatMessage,
+                     CompletedQuests, Contribution, Equipment, Experience, GearItem, KnowledgeBatch, KnowledgeEntry,
+                     LifeEquipment, NodeBatch, NodeState, OpenQuests, PlayerSighting, QuestKey, Servant, SkillPoints,
+                     Worker)
 
 __all__ = ["AccountDecoder", "AccountOpcodes", "AccountRecord", "CHAT_CHANNELS", "CLASS_NAMES",
-           "CharacterInfo", "CharacterSummary", "ChatMessage", "CompletedQuests", "Contribution", "Experience",
-           "GearItem", "KnowledgeBatch", "KnowledgeEntry", "NodeBatch", "NodeState", "OpenQuests", "PlayerSighting",
+           "CharacterInfo", "CharacterSummary", "ChatMessage", "CompletedQuests", "Contribution", "EQUIPMENT_SLOTS",
+           "Equipment", "Experience", "GearItem", "KnowledgeBatch", "KnowledgeEntry", "LIFE_EQUIPMENT_SLOTS",
+           "LifeEquipment", "NodeBatch", "NodeState", "OpenQuests", "PlayerSighting",
            "QuestKey", "SERVANT_CATEGORIES", "Servant", "SkillPoints", "TOWNS", "WORKER_SKILLS", "WORKER_TYPES",
            "Worker", "bundle_entries"]

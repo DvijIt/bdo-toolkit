@@ -12,7 +12,10 @@ All notable released changes to `bdo-toolkit` are documented here.
   fame), level and XP (the level comes only from XP messages; the short
   character profile carries a value that lags it after a level-up), the server's player list (nick, family, level, class
   id), chat messages, family servants (horses, ships, camps) with equipped
-  gear and durability, the worker list (type, level, stamina, town,
+  gear and durability, the logged-in character's equipped combat gear and
+  costumes by slot (attributed to the character from the preceding
+  character message) and the family's shared life skill gear, both with
+  raw item id, enhancement level and durability, the worker list (type, level, stamina, town,
   skills), the knowledge book (every gained knowledge id with a 1–5
   level, plus ecology knowledge points), family contribution points
   (available, total and progress to the next point), the logged-in
@@ -21,8 +24,10 @@ All notable released changes to `bdo-toolkit` are documented here.
   (completed quests, which are not every completed quest, and a list
   that is probably unlocked but unfinished quests). Bundled messages are unwrapped, including bundles split across
   consecutive messages of one connection; encrypted messages are skipped.
-  Opcodes and offsets were observed on EU in Oct 2026 and can be overridden
-  with `AccountOpcodes` after a patch. Id-to-name tables cover only ids
+  Opcodes and offsets follow the EU build of the 29 Oct 2026 patch, which
+  renumbered every account opcode and moved fields inside most messages, so
+  older captures no longer decode; the earlier opcodes are listed on
+  `AccountOpcodes`, which can be overridden after a patch. Id-to-name tables cover only ids
   confirmed in game; others render as `<kind>#<id>`.
 
 - Add profile-based world position telemetry. Optional schema-1 `position`

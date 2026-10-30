@@ -24,6 +24,23 @@ WORKER_SKILLS: dict[int, str] = {
 }
 SERVANT_CATEGORIES: dict[int, str] = {0: "horse", 1: "ship", 3: "camp"}
 CHAT_CHANNELS: dict[int, str] = {12: "recruitment", 19: "world"}
+# Slots named only where every observed item agrees; 21, 22, 23 (costume face/ear accessories),
+# 40 (a fishing rod) and 45 (a snowboard) are seen but left unnamed.
+EQUIPMENT_SLOTS: dict[int, str] = {
+    0: "main weapon", 1: "sub-weapon", 3: "armor", 4: "gloves", 5: "shoes", 6: "helmet", 7: "necklace",
+    8: "ring", 9: "ring", 10: "earring", 11: "earring", 12: "belt", 14: "costume armor", 15: "costume gloves",
+    16: "costume shoes", 17: "costume helmet", 18: "costume main weapon", 19: "costume sub-weapon",
+    27: "alchemy stone", 29: "awakening weapon", 30: "costume awakening weapon", 31: "tome", 32: "artifact",
+    33: "artifact",
+}
+LIFE_EQUIPMENT_SLOTS: dict[int, str] = {
+    0: "lumbering axe", 1: "fluid collector", 2: "hoe", 3: "butcher knife", 4: "tanning knife", 5: "pickaxe",
+    7: "artifact", 8: "artifact", 9: "fishing clothes", 10: "fishing tool", 11: "artifact", 12: "artifact",
+    13: "hunting clothes", 14: "hunting tool", 17: "cooking clothes", 18: "cooking tool", 21: "alchemy clothes",
+    22: "alchemy tool", 25: "processing clothes", 26: "processing tool", 29: "training clothes",
+    30: "training tool", 33: "trade clothes", 36: "sailing clothes", 37: "sailing tool", 46: "necklace",
+    47: "belt", 48: "ring", 49: "ring", 50: "earring", 51: "earring", 52: "alchemy stone",
+}
 
 
 def _name(table: dict[int, str], kind: str, key: int) -> str:
@@ -117,7 +134,8 @@ class ChatMessage(AccountRecord):
 
 @dataclass(frozen=True)
 class GearItem:
-    """One equipped item; ``item_id`` is the raw game id, names come from an item database."""
+    """One equipped item; ``item_id`` is the raw game id with the enhancement level in its top
+    byte (as in ``split_item_id_enhancement``), names come from an item database."""
 
     slot: int
     item_id: int
@@ -125,6 +143,16 @@ class GearItem:
     durability: int
     max_durability: int
     instance_id: int
+
+    @property
+    def base_item_id(self) -> int:
+        return self.item_id & 0xFFFFFF
+
+    @property
+    def enhancement_level(self) -> int:
+        """0 when unenhanced. Its in-game label depends on the item: 16-20 are PRI-PEN on
+        weapons and armor, while accessories count 1-5 as PRI-PEN."""
+        return self.item_id >> 24
 
 
 @dataclass(frozen=True)
@@ -141,6 +169,36 @@ class Servant(AccountRecord):
     @property
     def category_name(self) -> str:
         return _name(SERVANT_CATEGORIES, "category", self.category)
+
+
+@dataclass(frozen=True)
+class Equipment(AccountRecord):
+    """Combat gear and costumes worn by the logged-in character, sent once on entering the
+    world right after ``CharacterInfo``. ``character_id`` comes from that ``CharacterInfo``
+    (the message itself names no character) and is None if it was not seen. ``slot`` is
+    the game's equipment slot (``EQUIPMENT_SLOTS``)."""
+
+    record_type: ClassVar[str] = "equipment"
+    character_id: int | None
+    gear: tuple[GearItem, ...] = field(default=())
+
+    @property
+    def slot_names(self) -> tuple[str, ...]:
+        return tuple(_name(EQUIPMENT_SLOTS, "slot", g.slot) for g in self.gear)
+
+
+@dataclass(frozen=True)
+class LifeEquipment(AccountRecord):
+    """Life skill gear (tools, outfits, life accessories and artifacts), sent once on
+    entering the world. It is shared by the family: every character received the same set.
+    ``slot`` keys ``LIFE_EQUIPMENT_SLOTS``."""
+
+    record_type: ClassVar[str] = "life_equipment"
+    gear: tuple[GearItem, ...] = field(default=())
+
+    @property
+    def slot_names(self) -> tuple[str, ...]:
+        return tuple(_name(LIFE_EQUIPMENT_SLOTS, "slot", g.slot) for g in self.gear)
 
 
 @dataclass(frozen=True)
